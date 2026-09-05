@@ -1,0 +1,45 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  agents/consumer: {}
+
+  agents/lenders: {}
+
+  apps/orchestrator: {}
+
+  apps/web: {}
+
+  packages/audit: {}
+
+  packages/config: {}
+
+  packages/credit-protocol: {}
+
+  packages/domain: {}
+
+  packages/hedera: {}
+
+  packages/persistence: {}
+
+  packages/policy: {}
+
+  packages/schemas: {}
+
+  packages/x402: {}
+
+  packages/zk-policy: {}
+
+  services/directory: {}
+
+  services/resource-server: {}
+
+  services/restricted-signer: {}
+
+  tests/e2e: {}

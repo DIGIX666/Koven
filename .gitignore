@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.next/
+coverage/
+.turbo/
+
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+
+# Generated zero-knowledge artifacts
+packages/zk-policy/artifacts/*
+!packages/zk-policy/artifacts/.gitkeep
+
+# Local persistence
+*.db
+*.db-shm
+*.db-wal
+

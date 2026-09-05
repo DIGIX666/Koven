@@ -1,0 +1,21 @@
+{
+  "name": "koven",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Credit and payment-policy infrastructure for autonomous x402 agents on Hedera.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "pnpm --parallel --recursive --if-present dev",
+    "build": "pnpm --recursive --if-present build",
+    "lint": "pnpm --recursive --if-present lint",
+    "typecheck": "pnpm --recursive --if-present typecheck",
+    "test": "pnpm --recursive --if-present test",
+    "test:e2e": "pnpm --filter @koven/e2e test",
+    "zk:build": "pnpm --filter @koven/zk-policy build",
+    "zk:test": "pnpm --filter @koven/zk-policy test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
