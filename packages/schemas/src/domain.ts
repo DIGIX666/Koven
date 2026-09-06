@@ -43,6 +43,20 @@ export const LoanSchema = z.object({
   fundingTxId: TransactionId.optional(), repaymentTxId: TransactionId.optional(),
 }).strict();
 export const ScanRequestSchema = z.object({ missionId: Id, targetRef: TargetRef, source: Source, targetSha256: Sha256 }).strict();
+// Signature authenticity and transaction/source hashing are service checks.
+export const ScanPaymentAuthorizationSchema = z.object({
+  missionId: Id, targetSha256: Sha256, transactionSha256: Sha256,
+  transactionId: TransactionId, borrowerAccountId: AccountId,
+  providerAccountId: AccountId, scanUrl: HttpUrl, amountTinybar: TinybarString,
+  network: z.literal("hedera:testnet"), asset: z.literal("0.0.0"),
+  nonce: Nonce, expiresAt: Timestamp, signature: Signature,
+}).strict();
+export const PaidScanRequestSchema = ScanRequestSchema.extend({
+  paymentAuthorization: ScanPaymentAuthorizationSchema,
+}).superRefine((v, ctx) => {
+  if (v.missionId !== v.paymentAuthorization.missionId || v.targetSha256 !== v.paymentAuthorization.targetSha256)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Scan must match payment authorization" });
+});
 export const SeveritySchema = z.enum(["info", "low", "medium", "high", "critical"]);
 export const FindingSchema = z.object({
   ruleId: Id, severity: SeveritySchema, file: TargetRef, line: z.number().int().positive(), message: z.string().min(1).max(4096),

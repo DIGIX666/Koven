@@ -19,7 +19,7 @@ sequenceDiagram
     User->>Agent: Mission, source, budget
     Agent->>Directory: Discover and rank providers
     Directory-->>Agent: Ranked providers
-    Note over Agent,Signer: Trusted operator/registrar provisions selected mission policy
+    Note over Signer,Lender: Trusted registrar provisions identical mission policy to signer and all candidate lenders
     Agent->>Provider: ScanRequest without payment
     Provider-->>Agent: 402 challenge
     Agent->>Prover: Bound intent and mission policy
@@ -32,7 +32,7 @@ sequenceDiagram
         Agent->>Signer: Sign acceptance with intent and proof
         Signer-->>Agent: Bound acceptance and signature
         Agent->>Lender: Signed acceptance, intent and proof
-        Lender->>Lender: Independently verify proof and terms
+        Lender->>Lender: Load registrar policy; independently verify proof, intent and terms
         Lender->>Hedera: Fund borrower
         Lender->>Signer: Authenticated loan registration
         Signer->>Hedera: Verify funding
@@ -41,8 +41,9 @@ sequenceDiagram
     end
     Agent->>Signer: Authorize exact intent, nonce and proof
     Signer->>Signer: Verify; atomically consume nonce and reserve budget
-    Signer-->>Agent: Signed x402 transaction
-    Agent->>Provider: Paid scan request
+    Signer-->>Agent: Signed x402 transaction and payment authorization
+    Agent->>Provider: PaidScanRequest and x402 payment
+    Provider->>Provider: Verify authorization, exact transaction bytes and source binding
     Provider->>Hedera: Settle through Blocky402
     Provider-->>Agent: Report and settlement header
     Provider->>Agent: Durable HMAC completion callback
@@ -212,11 +213,12 @@ issues; schema parsing is not signature, hash, proof or consensus verification.
 | signer `POST /sign-credit-acceptance` | `SignCreditAcceptance`; `SignCreditAcceptanceZk` in M3+ | 200 `SignedAcceptance` | Consumer service credential |
 | signer `POST /internal/loans/register` | `LoanRegistrationRequest` | 200 `LoanRegistrationResponse` (`state: funded`) | Lender-specific credential |
 | signer `POST /internal/missions/register` | `MissionPolicyRequest` | 200 `MissionPolicyResponse` | Trusted operator/registrar credential |
+| lender `POST /internal/missions/register` | `MissionPolicyRequest` | 200 `MissionPolicyResponse` | Trusted operator/registrar credential |
 | signer `POST /internal/missions/complete` | Original `CompletionCallback` body and headers | 202 `CallbackResponse` | Provider HMAC; forwarded unchanged |
 | signer `GET /health` | No body | 200 `HealthResponse` | Local health endpoint |
 | directory `GET /providers` | No body | 200 `ProvidersResponse` | Local read API |
 | directory `GET /providers/rank` | `ProviderRankQuery` extracted query | 200 `ProviderRankResponse` | Local read API |
-| provider `POST /scan` | `ScanRequest` | 402 empty body + `PAYMENT-REQUIRED`, or 200 `ScanReport` + `PAYMENT-RESPONSE` | x402 paid retry |
+| provider `POST /scan` | `ScanRequest` for challenge; `PaidScanRequest` for paid retry | 402 empty body + `PAYMENT-REQUIRED`, or 200 `ScanReport` + `PAYMENT-RESPONSE` | x402 paid retry |
 | orchestrator `POST /missions` | `CreateMissionRequest` | 201 `Mission` | Local demo/user entry point |
 | orchestrator `GET /missions/:id` | `MissionParams` path, no body | 200 `MissionDetailResponse` | Local read API |
 | orchestrator `POST /callbacks/mission-complete` | `CompletionCallback`, `CallbackHeaders` | 202 `CallbackResponse` | Provider HMAC |
@@ -253,6 +255,26 @@ In M2/M3, the operator provisions the configured provider. In M4, a trusted
 registrar recomputes deterministic selection from the same frozen directory/event
 snapshot before provisioning; the orchestrator can propose, but cannot freely
 register a different recipient or cap. Registrar integration belongs to A4.2/B4.4.
+
+Before requesting quotes, the registrar provisions the identical `MissionPolicyRequest`
+to the signer and every candidate lender through their respective
+`POST /internal/missions/register` routes. Each service authenticates its own
+configured registrar credential, persists the policy by mission ID, acknowledges
+identical retries and rejects any differing second registration with
+`mission_policy_conflict`. A partial provisioning failure is retried by the
+registrar; no borrower-facing endpoint can provision or replace policy.
+
+Lenders require this local policy at both `/credit/quote` and `/credit/accept`;
+absence returns `mission_policy_missing` without an offer or funding. They check
+borrower, mission and request `purposeHash` against it. In M3, independently
+recompute the selected provider root, compare the proof root and cap to the stored
+root and mission spending cap, and recompute the intent resource hash from the
+stored source hash, mission and provider URL. Check recipient, amount (within the
+cap and covered by principal), nonce and commitment against the signed intent.
+Mismatch returns `mission_policy_mismatch` before funding. Public proof signals
+and borrower-supplied data never establish the expected policy. Session-wide
+spending reservations remain the signer's responsibility. Registrar provisioning
+is required in M2 too; only proof/root verification is deferred to M3.
 
 `/authorize` reloads this policy and recomputes the normalized challenge from the
 actual requirements, canonical provider `/scan` URL, method, mission, stored
@@ -319,6 +341,50 @@ The orchestrator hashes the exact UTF-8 `source` supplied at mission creation;
 `targetRef` is a display label, never a fetched URL. Before paid scanning, the
 provider validates `ScanRequest`, recomputes its source hash, and rejects mismatch
 with `source_hash_mismatch`. A returned report uses the recomputed hash.
+
+The initial unpaid request uses `ScanRequest`. Every paid retry uses
+`PaidScanRequest`, adding mandatory `paymentAuthorization` from
+`AuthorizeResponse` alongside the existing x402 payment header. The consumer's
+x402 adapter retains this authorization when the remote signer returns transaction
+bytes and attaches it to the corresponding retry; it must never mix concurrent
+missions or authorizations. This is required in M2 and M3+.
+
+`ScanPaymentAuthorization` contains `missionId`, `targetSha256`,
+`transactionSha256`, `transactionId`, `borrowerAccountId`, `providerAccountId`,
+`scanUrl`, `amountTinybar`, `network`, `asset`, `nonce`, `expiresAt`, `signature`.
+The signer constructs it from its trusted policy and the actual transaction it
+returns, after the nonce/budget reservation. `transactionSha256` is SHA-256 of
+those exact base64-decoded partially signed transaction bytes, before facilitator
+signatures are added; never hash a reserialized or settled transaction instead.
+`expiresAt` cannot exceed the transaction's valid-start plus valid-duration.
+Sign UTF-8 `koven:scan-payment-authorization:v1\n<canonical-json>` excluding
+`signature`, using the ECDSA encoding defined in the credit signatures section. Providers pin the restricted
+signer's verification key by borrower account in configuration; request-supplied
+keys are not accepted. This is a typed authorization, not an arbitrary signing API.
+
+Before any middleware or facilitator call can settle a payment, the provider:
+
+1. Validates the paid body, recomputes the UTF-8 source hash, verifies the
+   authorization signature and expiry using its configured signer key.
+2. Matches mission and source hash to the authorization, and its own canonical
+   `/scan` URL and account to `scanUrl` and `providerAccountId`.
+3. Extracts the original transaction bytes from the incoming x402 payment and
+   matches their SHA-256 to `transactionSha256`; checks decoded transaction ID,
+   payer debit, recipient credit, amount, network and asset against the authorization
+   and its payment requirements. Normal x402 verification remains mandatory.
+4. Atomically claims `(network, transactionId)` in durable storage for this
+   mission/source/authorization. Conflicting reuse fails before settlement;
+   identical retries resume/reconcile the same operation or return its stored report,
+   without a second settlement or scan. Uncertain settlement keeps the claim.
+
+Missing/malformed authorization, untrusted signature or expiry returns
+`payment_authorization_invalid`; a valid authorization with different source,
+mission, transaction or payment fields returns `payment_authorization_mismatch`.
+An internally inconsistent source/hash still returns `source_hash_mismatch`.
+Validate the authorization before accepting the paid schema's cross-field
+refinements so adapters preserve these error distinctions. No mismatch may call
+settlement or the scan engine. Callback validation is an additional later check,
+not the enforcement point for this binding.
 `reportSha256` is SHA-256 of canonical report JSON excluding `reportSha256` itself.
 A report with zero findings is a successful result. Findings never determine loan
 repayment permission or whether delivery occurred.
@@ -410,8 +476,8 @@ mapping is frozen here; SDK errors are mapped to these codes at service boundari
 | Status | Codes |
 | --- | --- |
 | 400 | `request_invalid`, `source_hash_mismatch`, `report_schema_invalid`, `report_binding_mismatch`, `challenge_binding_mismatch` |
-| 401 | `auth_invalid`, `callback_auth_invalid`, `credit_request_signature_invalid`, `offer_signature_invalid`, `credit_acceptance_invalid` |
-| 403 | `proof_invalid`, `proof_vkey_mismatch`, `circuit_id_mismatch`, `recipient_not_approved`, `cap_exceeded`, `cumulative_budget_exceeded` |
+| 401 | `auth_invalid`, `callback_auth_invalid`, `credit_request_signature_invalid`, `offer_signature_invalid`, `credit_acceptance_invalid`, `payment_authorization_invalid` |
+| 403 | `proof_invalid`, `proof_vkey_mismatch`, `circuit_id_mismatch`, `recipient_not_approved`, `cap_exceeded`, `cumulative_budget_exceeded`, `payment_authorization_mismatch`, `mission_policy_missing`, `mission_policy_mismatch` |
 | 404 | `not_found` |
 | 409 | `nonce_already_used`, `offer_expired`, `illegal_state_transition`, `credit_acceptance_conflict`, `loan_registration_conflict`, `loan_not_funded`, `mission_not_repayable`, `funding_mismatch`, `idempotency_conflict`, `mission_policy_conflict` |
 | 413 | `source_too_large` (source or raw transport size limit) |
@@ -421,3 +487,21 @@ mapping is frozen here; SDK errors are mapped to these codes at service boundari
 `callback_duplicate` is a successful 202 response code, not an error status.
 No schemas imply that signatures, proofs or hashes are authentic: those checks
 and their adversarial integration tests remain mandatory in the owning issues.
+
+
+### Required adversarial integration coverage
+
+These are implementation acceptance criteria, not claims that service tests exist:
+
+- Authorize source A, submit source B with B's correct hash and A's payment and
+  authorization: reject before settlement and scanning; neither dependency is called.
+- Substitute a different transaction under an otherwise valid authorization;
+  reject before settlement. Cover tampered/expired signatures and missing authorization.
+- Retry a valid paid request concurrently and after a provider restart: one
+  settlement and one scan, with the same stored report returned on retries.
+- Quote/accept without registrar policy: no offer/funding. Consumer credentials
+  cannot register policy; identical registrar retries succeed, replacements fail.
+- Present a cryptographically valid proof with an unauthorized root or cap, or
+  an intent for a different source/provider/mission: lender refuses before funding.
+- Complete the happy path with the same registrar policy at signer/lender and
+  a source-bound payment authorization accepted by the provider.

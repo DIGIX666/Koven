@@ -1,5 +1,10 @@
+import type { ScanPaymentAuthorization } from "./payment.js";
+
 export interface ScanRequest {
   missionId: string; targetRef: string; source: string; targetSha256: string;
+}
+export interface PaidScanRequest extends ScanRequest {
+  paymentAuthorization: ScanPaymentAuthorization;
 }
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export interface Finding {

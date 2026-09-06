@@ -66,3 +66,12 @@ test("headers, duplicates, audit envelopes, loans and receipts have explicit sch
   s.LoanSchema.parse({ id: "loan-1", offerId: offer.id, missionId: "mission-1", lenderAccountId: offer.lenderAccountId, principalTinybar: "100", feeTinybar: "1", state: "funded", fundingTxId: tx });
   s.PaymentReceiptSchema.parse({ missionId: "mission-1", transactionId: tx, network: "hedera:testnet", payer: "0.0.10", recipientAccountId: "0.0.20", asset: "0.0.0", amountTinybar: "100", settledAt: time });
 });
+
+test("paid scans require complete authorization and matching mission/source claims", () => {
+  assert.equal(s.PaidScanRequestSchema.safeParse(fixtures.scanChallenge.request).success, false);
+  assert.equal(s.AuthorizeResponseSchema.safeParse({ transaction: "AQID" }).success, false);
+  for (const change of [{ missionId: "other" }, { targetSha256: "c".repeat(64) }])
+    assert.equal(s.PaidScanRequestSchema.safeParse({ ...fixtures.scan.request, ...change }).success, false);
+  const { signature: omitted, ...unsigned } = fixtures.scan.request.paymentAuthorization;
+  assert.equal(s.PaidScanRequestSchema.safeParse({ ...fixtures.scan.request, paymentAuthorization: unsigned }).success, false);
+});

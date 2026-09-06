@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { AccountId, Base64, FieldElement, Id, Nonce, Sha256, Signature, Source, TargetRef, TinybarString, TransactionId } from "./common.js";
-import { AuditEventSchema, CreditAcceptanceSchema, CreditOfferSchema, CreditRequestSchema, ErrorResponseSchema, MissionOutcomeSchema, MissionSchema, NormalizedChallengeSchema, PaymentRequirementsSchema, ProofBundleSchema, ProviderSchema, RankedProviderSchema, ScanReportSchema, ScanRequestSchema, UnsignedCreditRequestSchema } from "./domain.js";
+import { AuditEventSchema, CreditAcceptanceSchema, CreditOfferSchema, CreditRequestSchema, ErrorResponseSchema, MissionOutcomeSchema, MissionSchema, NormalizedChallengeSchema, PaymentRequirementsSchema, ProofBundleSchema, ProviderSchema, RankedProviderSchema, ScanReportSchema, ScanRequestSchema, PaidScanRequestSchema, ScanPaymentAuthorizationSchema, UnsignedCreditRequestSchema } from "./domain.js";
 
 export const AuthorizeRequestSchema = z.object({ missionId: Id, requirements: PaymentRequirementsSchema, nonce: Nonce, bundle: ProofBundleSchema.optional() }).strict();
 export const AuthorizeZkRequestSchema = AuthorizeRequestSchema.required({ bundle: true });
-export const AuthorizeResponseSchema = z.object({ transaction: Base64 }).strict();
+export const AuthorizeResponseSchema = z.object({ transaction: Base64, paymentAuthorization: ScanPaymentAuthorizationSchema }).strict();
 export const RepayRequestSchema = z.object({ missionId: Id, loanId: Id, idempotencyKey: z.string() }).strict()
   .refine(v => v.idempotencyKey === `repayment:${v.loanId}`, "Invalid repayment key");
 export const RepayResponseSchema = z.object({ transactionId: TransactionId }).strict();
@@ -67,11 +67,12 @@ export const HTTP_CONTRACTS = {
   signCreditAcceptance: { request: SignCreditAcceptanceSchema, response: SignedAcceptanceSchema },
   registerLoan: { request: LoanRegistrationRequestSchema, response: LoanRegistrationResponseSchema },
   registerMissionPolicy: { request: MissionPolicyRequestSchema, response: MissionPolicyResponseSchema },
+  registerLenderMissionPolicy: { request: MissionPolicyRequestSchema, response: MissionPolicyResponseSchema },
   signerCompletion: { request: CompletionCallbackSchema, response: CallbackResponseSchema },
   health: { request: NoBodySchema, response: HealthResponseSchema },
   providers: { request: NoBodySchema, response: ProvidersResponseSchema },
   rankProviders: { request: ProviderRankQuerySchema, response: ProviderRankResponseSchema },
-  scan: { request: ScanRequestSchema, response: ScanReportSchema },
+  scan: { request: PaidScanRequestSchema, response: ScanReportSchema },
   scanChallenge: { request: ScanRequestSchema, response: NoBodySchema },
   createMission: { request: CreateMissionRequestSchema, response: MissionSchema },
   missionDetail: { request: MissionParamsSchema, response: MissionDetailResponseSchema },

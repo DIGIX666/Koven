@@ -28,6 +28,10 @@ export const ErrorCode = {
   FUNDING_MISMATCH: "funding_mismatch",
   IDEMPOTENCY_CONFLICT: "idempotency_conflict",
   MISSION_POLICY_CONFLICT: "mission_policy_conflict",
+  PAYMENT_AUTHORIZATION_INVALID: "payment_authorization_invalid",
+  PAYMENT_AUTHORIZATION_MISMATCH: "payment_authorization_mismatch",
+  MISSION_POLICY_MISSING: "mission_policy_missing",
+  MISSION_POLICY_MISMATCH: "mission_policy_mismatch",
   NOT_FOUND: "not_found",
   INTERNAL_ERROR: "internal_error",
 } as const;

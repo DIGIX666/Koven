@@ -19,3 +19,11 @@ export interface PaymentReceipt {
   payer: string; recipientAccountId: string; asset: "0.0.0";
   amountTinybar: bigint; settledAt: string;
 }
+
+/** Signed by the restricted signer; verified by the provider before settlement. */
+export interface ScanPaymentAuthorization {
+  missionId: string; targetSha256: string; transactionSha256: string;
+  transactionId: string; borrowerAccountId: string; providerAccountId: string;
+  scanUrl: string; amountTinybar: bigint; network: "hedera:testnet"; asset: "0.0.0";
+  nonce: string; expiresAt: string; signature: string;
+}

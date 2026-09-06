@@ -32,6 +32,19 @@ review shared contracts before merge.
 | Package naming | Existing packages remain `@koven/*`. Protocol signature domains use `koven:*` and the circuit identity is `koven-policy-v1`. | Keep package names, signed-message domains and circuit identity consistent before the first implementation release. |
 | Delivery | One functional issue, branch and PR; multiple atomic commits allowed. F01 covers S0.0/S0.1. | Stable task IDs remain references; Git operations are handled by the developer. |
 
+## PR contract refinements
+
+- Paid scans carry a signer-signed authorization bound to the exact partially
+  signed transaction bytes, mission and source. Providers verify it before
+  settlement and durably deduplicate the payment. Source/hash consistency alone
+  cannot establish that the signer authorized that scan.
+- The trusted registrar provisions identical immutable mission policy to signer
+  and candidate lenders. Lenders fail closed without this reference; pinning a
+  circuit verification key does not authorize its public root or spending cap.
+
+These refinements are proposed for review in this PR; the service implementations
+and adversarial integration checks remain in the owning roadmap tasks.
+
 ## Contract ownership and validation
 
 `packages/domain` contains in-memory types (money as `bigint`). `packages/schemas`
