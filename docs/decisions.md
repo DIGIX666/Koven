@@ -67,3 +67,29 @@ remain B0.2. Subsequent changes to shared types, schemas or HTTP interfaces requ
 a `refactor(contract): …` PR with a brief rationale and explicit approval from
 the other development track before merge. Keep `.gitkeep` only in directories
 without real files.
+
+
+## A0.2 implementation decisions
+
+- Pin `@hiero-ledger/sdk` to `2.85.0`, the exact dependency reported by
+  `pnpm view @x402/hedera@2.24.0 dependencies --json`; enforce it through the root
+  pnpm override. `@koven/hedera` is the sole direct SDK importer. API usage was
+  checked against the installed version's source and TypeScript declarations.
+- Use Vitest `2.1.9` for the Hedera package with a shared root configuration base.
+  Keep the existing contract tests unchanged; the live testnet test is an explicit
+  command, excluded from ordinary `pnpm test`.
+- Transfers debit only the client's operator, require an existing numeric target,
+  and accept positive signed-int64 tinybars. Domain wire money remains uint64;
+  larger values cannot be represented in Hedera's signed transfer amounts.
+- A0.2 topic creation sets the operator admin key and leaves submission public
+  to support the separate lender hooks planned in M5. A topic message is not
+  authenticated merely because it appears on that topic; M5 must validate its
+  expected payer and match it to trusted local event references/hashes.
+- Submit only single-chunk HCS messages (1–1024 UTF-8 bytes). The mirror adapter
+  returns one bounded ascending page with a sequence cursor, retains base64
+  payloads, and rejects unsafe JSON integers rather than silently rounding them.
+- The published SDK `2.85.0` pins `protobufjs` to `8.2.0`, while its
+  `@hiero-ledger/proto@2.31.0` dependency declares peer `protobufjs@8.0.1`.
+  pnpm reports this upstream mismatch. Keep the SDK's declared dependency graph
+  rather than overriding protobuf independently; A0.4 remains the x402 compatibility
+  gate. Installing the SDK and passing A0.2 does not certify x402 settlement.
