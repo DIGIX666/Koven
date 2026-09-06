@@ -10,6 +10,13 @@ overrides:
 importers:
 
   .:
+    dependencies:
+      '@x402/core':
+        specifier: 2.24.0
+        version: 2.24.0
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.2.0)(strip-ansi@7.1.2)
     devDependencies:
       '@koven/hedera':
         specifier: workspace:*
@@ -816,6 +823,12 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@x402/core@2.24.0':
+    resolution: {integrity: sha512-zKFbG+RgUhBXT9RcBQZGPW1cZXL9xpiTv68XSSuO1SMoobudmVvxYgP/bhoxJuAoqJjjEceeAhT4/EcA/wolrQ==}
+
+  '@x402/hedera@2.24.0':
+    resolution: {integrity: sha512-taK6AVZU66cVIk8hW3HXgRdzXRWfRei+q2eI7swib0BLgdvF+OWdMqBGE2ZU7+7/11MLNZeSj7Nhh861I3RvWA==}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -2165,7 +2178,7 @@ snapshots:
   '@grpc/proto-loader@0.7.15':
     dependencies:
       lodash.camelcase: 4.3.0
-      long: 5.3.1
+      long: 5.3.2
       protobufjs: 7.6.6
       yargs: 17.7.3
 
@@ -2196,6 +2209,15 @@ snapshots:
       ansi-regex: 6.2.2
       ansi-styles: 6.2.3
       debug: 4.4.1
+      long: 5.3.1
+      protobufjs: 8.2.0
+      strip-ansi: 7.1.2
+
+  '@hiero-ledger/proto@2.31.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(debug@4.4.3)(protobufjs@8.2.0)(strip-ansi@7.1.2)':
+    dependencies:
+      ansi-regex: 6.2.2
+      ansi-styles: 6.2.3
+      debug: 4.4.3
       long: 5.3.1
       protobufjs: 8.2.0
       strip-ansi: 7.1.2
@@ -2512,6 +2534,28 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@x402/core@2.24.0':
+    dependencies:
+      zod: 3.25.76
+
+  '@x402/hedera@2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.2.0)(strip-ansi@7.1.2)':
+    dependencies:
+      '@hiero-ledger/proto': 2.31.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(debug@4.4.3)(protobufjs@8.2.0)(strip-ansi@7.1.2)
+      '@hiero-ledger/sdk': 2.85.0(bn.js@5.2.3)(react-native@0.87.1(@babel/core@7.29.7)(react@19.2.8))
+      '@x402/core': 2.24.0
+    transitivePeerDependencies:
+      - ansi-regex
+      - ansi-styles
+      - bn.js
+      - bufferutil
+      - debug
+      - expo-crypto
+      - protobufjs
+      - react-native
+      - strip-ansi
+      - supports-color
+      - utf-8-validate
 
   accepts@2.0.0:
     dependencies:
@@ -3292,7 +3336,7 @@ snapshots:
   protobufjs@8.2.0:
     dependencies:
       '@types/node': 22.18.6
-      long: 5.3.1
+      long: 5.3.2
 
   pump@3.0.4:
     dependencies:

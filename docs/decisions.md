@@ -91,8 +91,8 @@ without real files.
 - The published SDK `2.85.0` pins `protobufjs` to `8.2.0`, while its
   `@hiero-ledger/proto@2.31.0` dependency declares peer `protobufjs@8.0.1`.
   pnpm reports this upstream mismatch. Keep the SDK's declared dependency graph
-  rather than overriding protobuf independently; A0.4 remains the x402 compatibility
-  gate. Installing the SDK and passing A0.2 does not certify x402 settlement.
+  rather than overriding protobuf independently. A0.4 validated the x402
+  settlement path with these pinned versions; the upstream peer warning remains.
 
 ## A0.3 provisioning decisions
 
@@ -106,6 +106,22 @@ without real files.
 - Create missing non-operator accounts with 1 test HBAR by default. Existing IDs
   are validated and skipped; roles remain distinct. Funding commands require an
   explicit target balance and send only its shortfall.
-- Provider recovery keys remain in provisioning-only `.env` variables. This
-  replaces the manual password-manager-only setup instruction; running scan
-  services still need no Hedera private key.
+- Provider recovery keys remain in provisioning-only `.env` variables; running
+  scan services need no Hedera private key.
+
+## A0.4 settlement decision
+
+- The smoke test uses `@x402/hedera@2.24.0`'s `ExactHederaScheme` and
+  `createClientHederaSigner`, with `HTTPFacilitatorClient` from `@x402/core@2.24.0`.
+  It reads and validates the Hedera fee payer returned by Blocky402 `/supported`,
+  then calls `/verify` and `/settle` through the official facilitator client.
+- It saves the payment transaction ID before calling settlement once and checks
+  the response's ID, payer and network. Mirror confirmation checks consensus
+  success and the exact HBAR debit/credit. A rerun reconciles the saved ID instead
+  of creating a new payment, whether the journal is pending or confirmed.
+- SDK primitives used with x402 come from `@x402/hedera`'s re-exports, as required
+  by the roadmap. An exact version override alone does not guarantee identical
+  module instances when pnpm resolves different peer-dependency contexts.
+- The successful 2026-09-06 test settled `1000000` tinybars to provider A and is
+  recorded in `docs/setup.md` as public evidence. This validates the facilitator
+  path, not the later paid resource-server middleware or Koven authorization gate.
