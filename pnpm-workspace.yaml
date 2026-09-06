@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - agents/*
+  - services/*
+  - packages/*
+  - tests/e2e
+
