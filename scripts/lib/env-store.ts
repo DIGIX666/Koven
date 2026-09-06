@@ -7,9 +7,13 @@ export class OperatorError extends Error {}
 
 /** Preserve the template/comments while atomically saving provisioning state. */
 export function updateEnv(content: string, updates: Record<string, string>): string {
+  const original = parse(content);
   for (const [key, value] of Object.entries(updates)) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key) || !/^[A-Za-z0-9.:/@_-]*$/.test(value)) {
       throw new OperatorError("Invalid provisioning configuration value");
+    }
+    if (/[\r\n]/.test(original[key] ?? "")) {
+      throw new OperatorError("Cannot safely update .env; use single-line provisioning assignments");
     }
     const pattern = new RegExp(`^\\s*(?:export[ \\t]+)?${key}[ \\t]*=.*$`);
     let found = false;
@@ -20,6 +24,12 @@ export function updateEnv(content: string, updates: Record<string, string>): str
       return true;
     }).map(line => pattern.test(line) ? `${key}=${value}` : line).join("\n");
     if (!found) content = `${content.trimEnd()}\n${key}=${value}\n`;
+  }
+  const updated = parse(content);
+  if (Object.entries(updates).some(([key, value]) => updated[key] !== value)
+      || Object.entries(original).some(([key, value]) => !Object.hasOwn(updates, key) && updated[key] !== value)
+      || Object.keys(updated).some(key => !Object.hasOwn(original, key) && !Object.hasOwn(updates, key))) {
+    throw new OperatorError("Cannot safely update .env; use single-line provisioning assignments");
   }
   return content;
 }
@@ -41,12 +51,12 @@ export class EnvStore {
     const temporary = `${this.path}.write-${randomUUID()}`;
     const fd = openSync(temporary, "wx", 0o600);
     try {
-      writeFileSync(fd, content);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    try {
+      try {
+        writeFileSync(fd, content);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
       renameSync(temporary, this.path);
       const directory = openSync(dirname(this.path), "r");
       try { fsyncSync(directory); } finally { closeSync(directory); }

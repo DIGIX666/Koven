@@ -12,9 +12,12 @@ the command. Shell environment values do not override the provisioning inventory
 | `pnpm tsx scripts/hedera-create-accounts.ts --role provider-a --initial-tinybar 100000000` | Create only the selected missing role with an explicit initial balance. |
 | `pnpm tsx scripts/hedera-fund.ts --role provider-a --target-tinybar 100000000` | Transfer only the shortfall needed to reach 1 HBAR. Skip if already funded to that target. |
 | `pnpm tsx scripts/hedera-create-topic.ts` | Create and save an operator-administered audit topic, or validate the existing configured topic. |
+| `pnpm tsx scripts/x402-smoke.ts` | Verify and settle one exact HBAR payment, or reconcile the saved payment on rerun. |
 
-All submitted transactions also incur normal testnet network fees, paid by the
-operator. Existing funding destinations are checked with `AccountInfoQuery`
+The Hedera provisioning transactions incur testnet network fees paid by the
+operator. For the x402 payment, Blocky402's advertised fee payer pays the
+settlement fee; the consumer pays the service amount. Existing funding
+destinations are checked with `AccountInfoQuery`
 before any transfer. Account creation necessarily targets a new account; the
 operator is checked first, and the newly created account/key is checked afterward.
 Amounts are positive decimal tinybar strings bounded to signed int64.
@@ -60,3 +63,17 @@ pnpm test:scripts
 
 Both checks are included in the root `pnpm typecheck` / `pnpm test` commands.
 Network operations run only through the explicit commands above.
+
+The x402 smoke test validates the consumer and provider A accounts, uses SDK
+primitives from `@x402/hedera`, and discovers the fee payer through `/supported`.
+It checks the verification payer and binds the settlement response to the exact
+transaction, payer and testnet network. The mirror must confirm the successful
+HBAR transfer and exact consumer/provider amounts.
+
+Before `/settle`, the public transaction ID is saved as `KOVEN_X402_SMOKE_TX_ID`
+with `KOVEN_X402_SMOKE_STATE=pending`. Reruns reconcile this ID without signing
+or settling another payment; this also applies to a confirmed journal entry.
+The smoke test sends `1000000` tinybars only when no saved entry exists.
+`--reconcile <transaction-id>` imports an earlier smoke payment after independently
+checking its result and amounts. An unresolved result retains the journal; no
+raw signed bytes are stored. See `docs/setup.md` for the recorded transaction.

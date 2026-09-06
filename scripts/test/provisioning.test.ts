@@ -39,6 +39,14 @@ test("keys and transaction journal survive reopening and remain mode 0600", () =
   } finally { f.clean(); }
 });
 
+test("multiline dotenv values are never corrupted by provisioning updates", () => {
+  const before = 'OTHER_SECRET="line one\nPROVIDER_A_ACCOUNT_ID=inside-secret\nline three"\nPROVIDER_A_ACCOUNT_ID=\n';
+  assert.throws(() => updateEnv(before, { PROVIDER_A_ACCOUNT_ID: "0.0.30" }), /safely update/);
+  assert.throws(() => updateEnv('PROVIDER_A_ACCOUNT_ID="\nold\n"\n', { PROVIDER_A_ACCOUNT_ID: "0.0.30" }), /safely update/);
+  const unrelated = 'OTHER_SECRET="line one\nline two"\nPROVIDER_A_ACCOUNT_ID=\n';
+  assert.equal(parse(updateEnv(unrelated, { PROVIDER_A_ACCOUNT_ID: "0.0.30" })).OTHER_SECRET, parse(unrelated).OTHER_SECRET);
+});
+
 test("concurrent provisioning is rejected and a failed operation releases its lock", async () => {
   const f = fixture();
   try {

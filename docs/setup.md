@@ -1,8 +1,7 @@
 # Testnet setup
 
-This guide covers A0.1: account provisioning and local configuration. Hedera
-adapters and operational scripts are available in A0.2/A0.3; the Blocky402 smoke
-test remains A0.4.
+This guide covers F02 (A0.1–A0.4): local configuration, Hedera adapters,
+account/topic provisioning and the Blocky402 settlement smoke test.
 Use disposable, low-balance **testnet** accounts only. Never reuse mainnet keys.
 
 ## Create the local configuration
@@ -39,7 +38,7 @@ complete until all six accounts exist.
 | Role | Account ID variable | Private key destination |
 | --- | --- | --- |
 | Operator | `HEDERA_OPERATOR_ID` | `HEDERA_OPERATOR_PRIVATE_KEY`; provisioning and operator scripts |
-| Consumer | `CONSUMER_ACCOUNT_ID` | `CONSUMER_PRIVATE_KEY`; restricted signer only |
+| Consumer | `CONSUMER_ACCOUNT_ID` | `CONSUMER_PRIVATE_KEY`; restricted signer in the application, also used by the explicit A0.4 diagnostic |
 | Lender A | `LENDER_A_ACCOUNT_ID` | `LENDER_A_PRIVATE_KEY`; lender A process only |
 | Lender B | `LENDER_B_ACCOUNT_ID` | `LENDER_B_PRIVATE_KEY`; lender B process only |
 | Provider A | `PROVIDER_A_ACCOUNT_ID` | Keep offline locally; scan service only needs the payTo ID |
@@ -48,8 +47,8 @@ complete until all six accounts exist.
 For script-created providers, keep recovery keys in the local `.env` entries
 `PROVIDER_A_PRIVATE_KEY` / `PROVIDER_B_PRIVATE_KEY`; these are provisioning-only
 values and must not be passed to scan services. Back them up privately. A
-provider's callback credential is a separate service secret, not its Hedera key. Use ECDSA private-key material,
-not a mnemonic or an Ed25519 key, for the four configured signing accounts.
+provider's callback credential is a separate service secret, not its Hedera key.
+Use ECDSA private-key material for the four configured signing accounts.
 
 ## Fund and record the accounts
 
@@ -95,7 +94,7 @@ creates the topic. ZK artifacts are produced/pinned in A1; the directory setting
 alone does not mean a proof bundle or verification key exists. Mission roots and
 caps come from trusted policy provisioning, not invented setup values.
 
-## Completion checklist
+## Checklist for a new local setup
 
 - [ ] Six distinct numeric testnet IDs are mapped to the roles above.
 - [ ] All six accounts use ECDSA keys and have confirmed testnet funding.
@@ -103,9 +102,8 @@ caps come from trusted policy provisioning, not invented setup values.
 - [ ] Provider IDs and x402/ZK settings are filled without committing secrets.
 - [ ] A0.3 balance verification is recorded before merging F02.
 
-This guide and template do not certify that accounts have already been created
-or funded. Network validation remains pending until the public account checks
-and subsequent A0.3/A0.4 verification succeed.
+Complete this checklist for each new environment. The recorded results below
+describe the verified development accounts; another clone needs its own keys.
 
 
 ## A0.2 adapter verification
@@ -147,7 +145,8 @@ messages and JSON integers beyond JavaScript's safe range are rejected explicitl
 Primary references:
 
 - [Published x402 Hedera package](https://www.npmjs.com/package/@x402/hedera)
-  and its exact SDK dependency (checked with the registry command above).
+  and its exact SDK dependency (checked with
+  `pnpm view @x402/hedera@2.24.0 dependencies --json`).
 - [Official Hiero JavaScript SDK source](https://github.com/hiero-ledger/hiero-sdk-js)
   (implementation checked against installed `2.85.0`).
 - [Mirror topic-message REST API](https://docs.hedera.com/api-reference/topics/list-topic-messages-by-id).
@@ -160,8 +159,9 @@ is deliberately kept aligned with x402.
 On 2026-09-06, the explicit integration test passed with a `SUCCESS` receipt for
 1 tinybar operator → consumer:
 [HashScan transaction](https://hashscan.io/testnet/transaction/0.0.10388631@1788723073.132973278).
-This verifies the transfer adapter on testnet; topic adapters currently have
-mocked SDK coverage, and Blocky402 settlement remains A0.4.
+This verifies the transfer adapter on testnet. Topic creation is also exercised
+by the A0.3 script below; the package's HCS submission and message-reading
+adapters currently have offline coverage. A0.4 settlement evidence follows below.
 
 
 ## A0.3 provisioning commands
@@ -212,3 +212,44 @@ Repeated account/topic creation commands recognized the stored IDs and skipped
 creation. Repeating the same funding target sent no additional transfer. The
 final balance command confirmed all six funded accounts. Keys and provisioning
 journal entries remain only in the ignored local `.env`.
+
+### Recorded A0.4 settlement result
+
+The Blocky402 smoke test completed on 2026-09-06 with the advertised exact
+Hedera testnet scheme. It read the facilitator fee payer from `/supported`,
+created a partially signed HBAR transfer from the consumer, received a valid
+response from `/verify`, and settled one payment of `1000000` tinybars to
+provider A. The public receipt is the [HashScan transaction](https://hashscan.io/testnet/transaction/0.0.7162784@1788725329.539946918).
+
+Run it explicitly from the repository root:
+
+```sh
+pnpm tsx scripts/x402-smoke.ts
+```
+
+Without a saved smoke transaction, the command constructs one payment and
+checks `/verify` before calling `/settle` once. It records the transaction ID in
+`KOVEN_X402_SMOKE_TX_ID` before settlement, with `KOVEN_X402_SMOKE_STATE=pending`.
+It checks the returned transaction ID, network and payer, then independently
+verifies the successful HBAR transfer and exact amounts through the testnet
+mirror. Only then is the state set to `confirmed`.
+
+Reruns with a saved ID perform reconciliation only, including after a timeout.
+Mirror visibility can lag; retrying the command later does not send another
+payment. Raw signed transaction bytes are neither logged nor saved. A previous
+payment made before the journal was introduced can be checked without another
+settlement:
+
+```sh
+pnpm tsx scripts/x402-smoke.ts --reconcile 0.0.7162784@1788725329.539946918
+```
+
+The Blocky402 response uses `transaction` (the x402 v2 field), not
+`transactionId`. No facilitator rejection was observed during the successful test.
+
+The consumer paid `1000000` tinybars. The facilitator fee payer paid the network
+fee; the operator only pays for the diagnostic account queries. The smoke test
+requires the testnet facilitator/mirror URLs shown above and rejects conflicting
+network/asset settings. It does not exercise the later scan authorization gate.
+
+API reference: [Blocky402 facilitator endpoints](https://blocky402.com/docs/api-reference/).

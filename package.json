@@ -30,5 +30,9 @@
     "overrides": {
       "@hiero-ledger/sdk": "2.85.0"
     }
+  },
+  "dependencies": {
+    "@x402/core": "2.24.0",
+    "@x402/hedera": "2.24.0"
   }
 }
