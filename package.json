@@ -8,17 +8,21 @@
     "dev": "pnpm --parallel --recursive --if-present dev",
     "build": "pnpm --recursive --if-present build",
     "lint": "pnpm --recursive --if-present lint",
-    "typecheck": "pnpm --recursive --if-present typecheck",
-    "test": "pnpm --recursive --if-present test",
+    "typecheck": "pnpm --recursive --if-present typecheck && pnpm typecheck:scripts",
+    "test": "pnpm --recursive --if-present test && pnpm test:scripts",
     "test:e2e": "pnpm --filter @koven/e2e test",
     "zk:build": "pnpm --filter @koven/zk-policy build",
-    "zk:test": "pnpm --filter @koven/zk-policy test"
+    "zk:test": "pnpm --filter @koven/zk-policy test",
+    "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
+    "test:scripts": "tsx --test scripts/test/*.test.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@koven/hedera": "workspace:*",
     "@types/node": "22.18.6",
+    "dotenv": "16.6.1",
     "tsx": "4.20.6",
     "typescript": "5.9.3"
   },

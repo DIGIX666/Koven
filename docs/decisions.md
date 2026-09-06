@@ -93,3 +93,19 @@ without real files.
   pnpm reports this upstream mismatch. Keep the SDK's declared dependency graph
   rather than overriding protobuf independently; A0.4 remains the x402 compatibility
   gate. Installing the SDK and passing A0.2 does not certify x402 settlement.
+
+## A0.3 provisioning decisions
+
+- Operational scripts import the SDK through `@koven/hedera` and read root `.env`
+  with pinned `dotenv@16.6.1`. Require explicit testnet configuration and verify
+  operator/role account keys with `AccountInfoQuery` before moving existing funds.
+- Save generated ECDSA keys and transaction IDs in mode-0600 `.env` before
+  submission. Atomic replacement, a process lock and refusal to overwrite manual
+  edits protect provisioning state. Pending transactions are reconciled by ID;
+  failed/expired receipt lookup requires manual reconciliation, not resubmission.
+- Create missing non-operator accounts with 1 test HBAR by default. Existing IDs
+  are validated and skipped; roles remain distinct. Funding commands require an
+  explicit target balance and send only its shortfall.
+- Provider recovery keys remain in provisioning-only `.env` variables. This
+  replaces the manual password-manager-only setup instruction; running scan
+  services still need no Hedera private key.
