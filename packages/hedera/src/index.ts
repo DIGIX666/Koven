@@ -5,4 +5,5 @@ export { createTopic, submitTopicMessage } from "./topic.js";
 export { getTopicMessages, explorerUrl, type MirrorTopicMessage, type TopicMessagesOptions } from "./mirror.js";
 // Consumers must use this boundary instead of installing another SDK copy.
 export { AccountId, AccountInfoQuery, AccountCreateTransaction, Hbar, PrivateKey,
-  PublicKey, Transaction, TransactionId, Status, Client } from "@hiero-ledger/sdk";
+  PublicKey, Transaction, TransactionId, TransactionReceiptQuery,
+  TopicCreateTransaction, TopicId, TopicInfoQuery, TransferTransaction, Status, Client } from "@hiero-ledger/sdk";

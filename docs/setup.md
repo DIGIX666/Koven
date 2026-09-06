@@ -1,7 +1,8 @@
 # Testnet setup
 
 This guide covers A0.1: account provisioning and local configuration. Hedera
-adapters, operational scripts and the Blocky402 smoke test follow in A0.2–A0.4.
+adapters and operational scripts are available in A0.2/A0.3; the Blocky402 smoke
+test remains A0.4.
 Use disposable, low-balance **testnet** accounts only. Never reuse mainnet keys.
 
 ## Create the local configuration
@@ -32,9 +33,8 @@ address or public-key alias is not a substitute for the numeric ID in Koven.
 Prepare a separate ECDSA account/key pair for each remaining role. Do not reuse
 the operator account for another role. Portal account limits may prevent creating
 all six there: in that case bootstrap the operator now, then create the remaining
-accounts with the A0.3 account-creation script once A0.2 is available. No such
-script is implemented by A0.1; do not mark provisioning complete until all six
-accounts exist. This avoids assuming six portal accounts are available per login.
+accounts with `scripts/hedera-create-accounts.ts`. Do not mark provisioning
+complete until all six accounts exist.
 
 | Role | Account ID variable | Private key destination |
 | --- | --- | --- |
@@ -45,9 +45,10 @@ accounts exist. This avoids assuming six portal accounts are available per login
 | Provider A | `PROVIDER_A_ACCOUNT_ID` | Keep offline locally; scan service only needs the payTo ID |
 | Provider B | `PROVIDER_B_ACCOUNT_ID` | Keep offline locally; scan service only needs the payTo ID |
 
-Keep provider recovery keys in a local password manager; no provider private-key
-variable is required by the application. A provider's callback credential is a
-separate service secret, not its Hedera private key. Use ECDSA private-key material,
+For script-created providers, keep recovery keys in the local `.env` entries
+`PROVIDER_A_PRIVATE_KEY` / `PROVIDER_B_PRIVATE_KEY`; these are provisioning-only
+values and must not be passed to scan services. Back them up privately. A
+provider's callback credential is a separate service secret, not its Hedera key. Use ECDSA private-key material,
 not a mnemonic or an Ed25519 key, for the four configured signing accounts.
 
 ## Fund and record the accounts
@@ -161,3 +162,53 @@ On 2026-09-06, the explicit integration test passed with a `SUCCESS` receipt for
 [HashScan transaction](https://hashscan.io/testnet/transaction/0.0.10388631@1788723073.132973278).
 This verifies the transfer adapter on testnet; topic adapters currently have
 mocked SDK coverage, and Blocky402 settlement remains A0.4.
+
+
+## A0.3 provisioning commands
+
+See [the scripts guide](../scripts/README.md) for arguments, transaction journals,
+locking and recovery. With the operator, consumer and lenders configured:
+
+```sh
+pnpm tsx scripts/hedera-create-accounts.ts --role provider-a --initial-tinybar 100000000
+pnpm tsx scripts/hedera-create-accounts.ts --role provider-b --initial-tinybar 100000000
+pnpm tsx scripts/hedera-balances.ts
+pnpm tsx scripts/hedera-create-topic.ts
+```
+
+Each provider starts with 1 test HBAR from the operator. The scripts save its
+key, account ID and transaction reference locally without printing secrets.
+The topic ID is also saved in `.env`. To replenish a balance later:
+
+```sh
+pnpm tsx scripts/hedera-fund.ts --role provider-a --target-tinybar 100000000
+```
+
+This sends only the shortfall, not an additional 1 HBAR each time.
+
+### Recorded A0.3 testnet result
+
+Verified on 2026-09-06. All six accounts exist, use a single ECDSA secp256k1 key,
+and have positive balances. These are point-in-time testnet results, not fixed
+configuration values for another clone.
+
+| Role | Account ID | Verified balance (tinybar) |
+| --- | --- | --- |
+| Operator | `0.0.10388631` | `99647373289` |
+| Consumer | `0.0.10395759` | `100000000001` |
+| Lender A | `0.0.10395803` | `100000000000` |
+| Lender B | `0.0.10395927` | `100000000000` |
+| Provider A | `0.0.10396537` | `100000001` |
+| Provider B | `0.0.10396546` | `100000000` |
+
+Public transaction evidence:
+
+- [Provider A creation, initial 1 HBAR](https://hashscan.io/testnet/transaction/0.0.10388631@1788724281.314160195).
+- [Provider B creation, initial 1 HBAR](https://hashscan.io/testnet/transaction/0.0.10388631@1788724321.838683202).
+- [Audit topic creation: `0.0.10396556`](https://hashscan.io/testnet/transaction/0.0.10388631@1788724369.039019584).
+- [Provider A funding-script test: 1 tinybar](https://hashscan.io/testnet/transaction/0.0.10388631@1788724401.518583150).
+
+Repeated account/topic creation commands recognized the stored IDs and skipped
+creation. Repeating the same funding target sent no additional transfer. The
+final balance command confirmed all six funded accounts. Keys and provisioning
+journal entries remain only in the ignored local `.env`.
