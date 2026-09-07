@@ -8,6 +8,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run --root ../.. --project @koven/domain --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/domain"
   }
 }
