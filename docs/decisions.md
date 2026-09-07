@@ -32,6 +32,32 @@ review shared contracts before merge.
 | Package naming | Existing packages remain `@koven/*`. Protocol signature domains use `koven:*` and the circuit identity is `koven-policy-v1`. | Keep package names, signed-message domains and circuit identity consistent before the first implementation release. |
 | Delivery | One functional issue, branch and PR; multiple atomic commits allowed. F01 covers S0.0/S0.1. | Stable task IDs remain references; Git operations are handled by the developer. |
 
+## F03 implementation decisions
+
+- Workspace commands use shared TypeScript, ESLint and Vitest configuration and
+  must execute real package checks. Dependencies are pinned, and packages with
+  native install steps are explicitly allowed through the root pnpm policy.
+- Environment configuration is validated once at service startup and projected
+  into service-specific views. Consumer and orchestrator views cannot expose the
+  consumer private key. Pino redacts private keys, signatures and raw signed
+  transaction data, including values inherited by child loggers.
+- Mission lifecycle rules are represented by one exhaustive transition table.
+  `assertTransition` rejects every undocumented edge with
+  `illegal_state_transition`; `defaulted` and `closed` are terminal states.
+- Each process opens its own SQLite database file. Signer-owned missions, loans,
+  nonces and spending counters therefore remain outside orchestrator storage;
+  no shared database singleton or implicit path crosses that trust boundary.
+- SQLite runs versioned migrations with foreign keys, WAL and a bounded busy
+  timeout. Tinybar values are canonical decimal `TEXT` and become `bigint` at
+  application boundaries, so SQLite numeric coercion cannot lose uint64 precision.
+- Payment reservation uses an immediate transaction: insert the unique
+  `(mission_id, nonce)` and globally unique commitment, check mission and session
+  caps with `bigint`, then compare-and-swap both counters. Any conflict or cap
+  failure rolls back the nonce and every counter update. A successful reservation
+  is retained when the external payment outcome is uncertain.
+- B0.3 persists local event payloads and their publication status. Durable retry
+  workers and service-specific outboxes remain in their owning later issues.
+
 ## PR contract refinements
 
 - Paid scans carry a signer-signed authorization bound to the exact partially
@@ -62,8 +88,9 @@ pnpm --filter @koven/schemas test
 ```
 
 F01 tests validate the contracts, not cryptographic authenticity, Hedera behavior
-or service implementations. Workspace-wide tooling remains B0.4; transitions
-remain B0.2. Subsequent changes to shared types, schemas or HTTP interfaces require
-a `refactor(contract): …` PR with a brief rationale and explicit approval from
-the other development track before merge. Keep `.gitkeep` only in directories
-without real files.
+or complete service workflows. F03 supplies workspace checks, service-scoped
+configuration, executable mission transitions and transactional local persistence.
+Subsequent changes to shared types, schemas or HTTP interfaces require a
+`refactor(contract): …` PR with a brief rationale and explicit approval from the
+other development track before merge. Keep `.gitkeep` only in directories without
+real files.
