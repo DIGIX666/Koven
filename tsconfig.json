@@ -1,0 +1,62 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.tools.json"
+    },
+    {
+      "path": "./agents/consumer/tsconfig.build.json"
+    },
+    {
+      "path": "./agents/lenders/tsconfig.build.json"
+    },
+    {
+      "path": "./apps/orchestrator/tsconfig.build.json"
+    },
+    {
+      "path": "./apps/web/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/audit/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/config/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/credit-protocol/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/domain/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/hedera/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/persistence/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/policy/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/schemas/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/x402/tsconfig.build.json"
+    },
+    {
+      "path": "./packages/zk-policy/tsconfig.build.json"
+    },
+    {
+      "path": "./services/directory/tsconfig.build.json"
+    },
+    {
+      "path": "./services/resource-server/tsconfig.build.json"
+    },
+    {
+      "path": "./services/restricted-signer/tsconfig.build.json"
+    },
+    {
+      "path": "./tests/e2e/tsconfig.build.json"
+    }
+  ]
+}

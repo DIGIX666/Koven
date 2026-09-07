@@ -59,7 +59,7 @@ Full protocol flow, state machine, and ZK proof statement: [`docs/protocol.md`](
 git clone https://github.com/DIGIX666/Koven.git
 cd Koven
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 cp .env.example .env
 ```
 
@@ -72,17 +72,44 @@ credentials for local development.
 | Command | Purpose |
 | --- | --- |
 | `pnpm dev` | Run every workspace that currently exposes a `dev` script |
-| `pnpm build` | Build every workspace that currently exposes a `build` script |
-| `pnpm lint` | Lint every workspace that currently exposes a `lint` script |
-| `pnpm typecheck` | Type-check every workspace that currently exposes a `typecheck` script |
-| `pnpm test` | Test every workspace that currently exposes a `test` script |
-| `pnpm test:e2e` | Run the end-to-end workspace once its test runner is implemented |
-| `pnpm zk:build` | Compile the ZK policy circuit once its build script is implemented |
-| `pnpm zk:test` | Test proof generation and verification once its test script is implemented |
+| `pnpm build` | Compile all workspace sources and tool configurations using TypeScript project references |
+| `pnpm lint` | Run ESLint across sources, tests and tooling; warnings fail the command |
+| `pnpm typecheck` | Check tooling and every workspace, including contract type conformance |
+| `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered |
+| `pnpm test:e2e` | Run the E2E test project (currently no tests) |
+| `pnpm zk:build` | Build the ZK workspace's TypeScript; circuit compilation will be added in F04 |
+| `pnpm zk:test` | Run the ZK test project (currently no tests) |
 
-The repository is currently at the scaffold stage. Workspace-specific runtime,
-build, and test scripts will be added with their implementations, so aggregate
-commands may complete without starting a service or running a test yet.
+Use the pinned pnpm version from `packageManager` (Corepack), then run:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+pnpm typecheck
+pnpm lint
+pnpm test
+```
+
+Each workspace exposes `build`, `lint`, `typecheck` and `test`, for example
+`pnpm --filter @koven/schemas test`. Vitest projects extend the shared root
+configuration and are discovered by `vitest.workspace.ts`. The 28 F01 contract
+checks run under Vitest; their assertions and compile-time conformance are preserved.
+Scaffold-only projects explicitly allow an empty test suite at package level;
+this does not mean their features are implemented. Remove `--passWithNoTests`
+when adding a project's first suite. The root test command never permits an
+entirely empty test run.
+
+Build outputs stay in each workspace's ignored `dist/` directory; shared test
+configuration is compiled into `dist/tooling/`. Builds exclude tests, while
+`typecheck` includes them and works before a build. Package exports still point
+to TypeScript source for workspace development with tsx/Vitest. The web and E2E
+workspaces currently compile only their tool configuration: Next.js and the real
+E2E scenario belong to later tasks. This build does not compile Circom artifacts.
+
+When adding a workspace, add its build configuration to the root `tsconfig.json`.
+When adding a workspace dependency, also reference its `tsconfig.build.json` from
+the consumer's build configuration. Runtime services and testnet access are not
+needed for the B0.4 checks.
 
 ## Documentation
 

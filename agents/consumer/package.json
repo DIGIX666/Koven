@@ -2,6 +2,11 @@
   "name": "@koven/consumer-agent",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. --project @koven/consumer-agent --passWithNoTests"
+  }
 }
-

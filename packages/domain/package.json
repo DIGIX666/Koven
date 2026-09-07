@@ -5,6 +5,9 @@
   "type": "module",
   "exports": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -b tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --root ../.. --project @koven/domain --passWithNoTests"
   }
 }
