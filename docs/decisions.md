@@ -94,3 +94,61 @@ Subsequent changes to shared types, schemas or HTTP interfaces require a
 `refactor(contract): …` PR with a brief rationale and explicit approval from the
 other development track before merge. Keep `.gitkeep` only in directories without
 real files.
+
+
+## A0.2 implementation decisions
+
+- Pin `@hiero-ledger/sdk` to `2.85.0`, the exact dependency reported by
+  `pnpm view @x402/hedera@2.24.0 dependencies --json`; enforce it through the root
+  pnpm override. `@koven/hedera` is the sole direct SDK importer. API usage was
+  checked against the installed version's source and TypeScript declarations.
+- Use Vitest `2.1.9` for the Hedera package with a shared root configuration base.
+  Keep the existing contract tests unchanged; the live testnet test is an explicit
+  command, excluded from ordinary `pnpm test`.
+- Transfers debit only the client's operator, require an existing numeric target,
+  and accept positive signed-int64 tinybars. Domain wire money remains uint64;
+  larger values cannot be represented in Hedera's signed transfer amounts.
+- A0.2 topic creation sets the operator admin key and leaves submission public
+  to support the separate lender hooks planned in M5. A topic message is not
+  authenticated merely because it appears on that topic; M5 must validate its
+  expected payer and match it to trusted local event references/hashes.
+- Submit only single-chunk HCS messages (1–1024 UTF-8 bytes). The mirror adapter
+  returns one bounded ascending page with a sequence cursor, retains base64
+  payloads, and rejects unsafe JSON integers rather than silently rounding them.
+- The published SDK `2.85.0` pins `protobufjs` to `8.2.0`, while its
+  `@hiero-ledger/proto@2.31.0` dependency declares peer `protobufjs@8.0.1`.
+  pnpm reports this upstream mismatch. Keep the SDK's declared dependency graph
+  rather than overriding protobuf independently. A0.4 validated the x402
+  settlement path with these pinned versions; the upstream peer warning remains.
+
+## A0.3 provisioning decisions
+
+- Operational scripts import the SDK through `@koven/hedera` and read root `.env`
+  with pinned `dotenv@16.6.1`. Require explicit testnet configuration and verify
+  operator/role account keys with `AccountInfoQuery` before moving existing funds.
+- Save generated ECDSA keys and transaction IDs in mode-0600 `.env` before
+  submission. Atomic replacement, a process lock and refusal to overwrite manual
+  edits protect provisioning state. Pending transactions are reconciled by ID;
+  failed/expired receipt lookup requires manual reconciliation, not resubmission.
+- Create missing non-operator accounts with 1 test HBAR by default. Existing IDs
+  are validated and skipped; roles remain distinct. Funding commands require an
+  explicit target balance and send only its shortfall.
+- Provider recovery keys remain in provisioning-only `.env` variables; running
+  scan services need no Hedera private key.
+
+## A0.4 settlement decision
+
+- The smoke test uses `@x402/hedera@2.24.0`'s `ExactHederaScheme` and
+  `createClientHederaSigner`, with `HTTPFacilitatorClient` from `@x402/core@2.24.0`.
+  It reads and validates the Hedera fee payer returned by Blocky402 `/supported`,
+  then calls `/verify` and `/settle` through the official facilitator client.
+- It saves the payment transaction ID before calling settlement once and checks
+  the response's ID, payer and network. Mirror confirmation checks consensus
+  success and the exact HBAR debit/credit. A rerun reconciles the saved ID instead
+  of creating a new payment, whether the journal is pending or confirmed.
+- SDK primitives used with x402 come from `@x402/hedera`'s re-exports, as required
+  by the roadmap. An exact version override alone does not guarantee identical
+  module instances when pnpm resolves different peer-dependency contexts.
+- The successful 2026-09-06 test settled `1000000` tinybars to provider A and is
+  recorded in `docs/setup.md` as public evidence. This validates the facilitator
+  path, not the later paid resource-server middleware or Koven authorization gate.

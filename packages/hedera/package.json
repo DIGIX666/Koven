@@ -4,10 +4,17 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
+  "dependencies": {
+    "@hiero-ledger/sdk": "2.85.0"
+  },
+  "devDependencies": {
+    "vitest": "2.1.9"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/hedera --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/hedera --passWithNoTests",
+    "test:integration": "node --env-file=../../.env ./node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts"
   }
 }
