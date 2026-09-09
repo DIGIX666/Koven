@@ -53,6 +53,9 @@ The scripts fill `X402_PAY_TO_ACCOUNT_ID` from provider A only if it is empty,
 and save `HCS_AUDIT_TOPIC_ID` after successful topic creation. The public-submit
 HCS topic supports the independent lender hooks planned in M5; messages still
 require provenance checks before being treated as audit evidence.
+Existing, newly created and recovered audit topics must have the operator's
+admin key and no submit key. The script checks both before accepting the topic
+or saving its ID; a failed check retains any creation journal entry.
 
 ## Tests
 
