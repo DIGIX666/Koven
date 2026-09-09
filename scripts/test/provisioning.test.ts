@@ -7,6 +7,7 @@ import { parse } from "dotenv";
 import { EnvStore, updateEnv, withEnvLock } from "../lib/env-store.js";
 import { accountId, assertDistinctAccounts, role, tinybars } from "../lib/hedera.js";
 import { topUpAmount } from "../lib/funding.js";
+import { provisionAuditTopic } from "../lib/topic.js";
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "koven-provision-"));
@@ -130,3 +131,61 @@ test("pending transactions reconcile by their saved ID and reject unsuccessful r
     await assert.rejects(savedReceipt(ctx, "0.0.10@1.000000001"), /no SUCCESS/);
   } finally { f.clean(); }
 });
+
+for (const path of ["existing", "created", "recovered"] as const) {
+  for (const policy of ["public", "submit-key", "wrong-admin", "missing-admin"] as const) {
+    test(`${path} audit topic: ${policy}`, async t => {
+      const { createClient, PrivateKey, TopicCreateTransaction, TopicInfoQuery, TopicId,
+        TransactionReceiptQuery, Status } = await import("@koven/hedera");
+      const f = fixture();
+      const key = PrivateKey.generateECDSA();
+      const other = PrivateKey.generateECDSA().publicKey;
+      const client = createClient({ HEDERA_NETWORK: "testnet", HEDERA_OPERATOR_ID: "0.0.10",
+        HEDERA_OPERATOR_PRIVATE_KEY: key.toStringDer() });
+      try {
+        const store = new EnvStore(f.path);
+        const topicId = "0.0.50";
+        const journalKey = "KOVEN_CREATE_TOPIC_TX_ID";
+        const savedId = "0.0.10@1.000000001";
+        if (path === "existing") store.set({ HCS_AUDIT_TOPIC_ID: topicId });
+        if (path === "recovered") store.set({ [journalKey]: savedId });
+        const receipt = { status: Status.Success, topicId: TopicId.fromString(topicId) };
+        const logs = t.mock.method(console, "info", () => {});
+        const query = t.mock.method(TopicInfoQuery.prototype, "execute", async function (this: InstanceType<typeof TopicInfoQuery>) {
+          assert.equal(this.topicId?.toString(), topicId);
+          return { adminKey: policy === "missing-admin" ? null : policy === "wrong-admin" ? other : key.publicKey,
+            submitKey: policy === "submit-key" ? other : null };
+        });
+        const create = t.mock.method(TopicCreateTransaction.prototype, "execute", async function (this: InstanceType<typeof TopicCreateTransaction>) {
+          assert.equal(this.adminKey?.toString(), key.publicKey.toString());
+          assert.equal(this.submitKey, null);
+          assert.equal(store.get(journalKey), this.transactionId?.toString());
+          return { getReceipt: async () => receipt };
+        });
+        const recover = t.mock.method(TransactionReceiptQuery.prototype, "execute", async function (this: InstanceType<typeof TransactionReceiptQuery>) {
+          assert.equal(this.transactionId?.toString(), savedId);
+          return receipt;
+        });
+
+        if (policy === "public") {
+          await provisionAuditTopic({ store, client });
+          assert.equal(new EnvStore(f.path).get("HCS_AUDIT_TOPIC_ID"), topicId);
+          await provisionAuditTopic({ store, client });
+        } else {
+          await assert.rejects(provisionAuditTopic({ store, client }),
+            policy === "submit-key" ? /public submissions/ : /admin key/);
+          assert.equal(new EnvStore(f.path).get("HCS_AUDIT_TOPIC_ID"), path === "existing" ? topicId : "");
+          assert.ok(logs.mock.calls.every(call => !String(call.arguments[0]).startsWith("HCS_AUDIT_TOPIC_ID=")));
+        }
+        assert.equal(query.mock.callCount(), policy === "public" ? 2 : 1);
+        assert.equal(create.mock.callCount(), path === "created" ? 1 : 0);
+        assert.equal(recover.mock.callCount(), path === "recovered" ? 1 : 0);
+        if (path === "recovered") assert.equal(new EnvStore(f.path).get(journalKey), savedId);
+        if (path === "created") assert.ok(new EnvStore(f.path).get(journalKey));
+      } finally {
+        client.close();
+        f.clean();
+      }
+    });
+  }
+}
