@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import * as s from "../src/index.js";
 import { acceptance, bundle, callback, event, fixtures, hash, intent, offer, signature, time, tx } from "./fixtures.js";

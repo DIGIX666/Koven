@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { ErrorCode } from "@koven/domain";
+import { ErrorCode, LOAN_STATES, MISSION_STATES } from "@koven/domain";
 import { AUDIT_EVENT_TYPES } from "@koven/audit";
 import { AccountId, CurveCoordinate, FieldElement, HttpUrl, Id, Nonce, PositiveSeconds, Sha256, Signature, Source, TargetRef, Timestamp, TinybarString, TransactionId } from "./common.js";
 
-export const MissionStateSchema = z.enum(["created", "discovering-services", "credit-requested", "funded", "payment-preparation", "payment-authorized", "service-paid", "running", "completed", "repayment-pending", "repaid", "policy-rejected", "recovery", "failed", "defaulted", "closed"]);
+export const MissionStateSchema = z.enum(MISSION_STATES);
 export const MissionSchema = z.object({
   id: Id, state: MissionStateSchema, spendingCapTinybar: TinybarString, spentTinybar: TinybarString,
   approvedRecipientsRoot: FieldElement, targetRef: TargetRef, targetSha256: Sha256,
@@ -36,7 +36,7 @@ export const CreditAcceptanceSchema = z.object({
   offerId: Id, termsHash: Sha256, expiresAt: Timestamp,
   paymentIntentHash: Sha256.optional(), paymentProofBundleHash: Sha256.optional(),
 }).strict().refine(v => (v.paymentIntentHash === undefined) === (v.paymentProofBundleHash === undefined), "Both payment hashes must be present together");
-export const LoanStateSchema = z.enum(["offered", "accepted", "funded", "repaid", "defaulted"]);
+export const LoanStateSchema = z.enum(LOAN_STATES);
 export const LoanSchema = z.object({
   id: Id, offerId: Id, missionId: Id, lenderAccountId: AccountId,
   principalTinybar: TinybarString, feeTinybar: TinybarString, state: LoanStateSchema,

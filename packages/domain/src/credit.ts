@@ -14,7 +14,8 @@ export interface CreditAcceptance {
   lenderAccountId: string; offerId: string; termsHash: string;
   expiresAt: string; paymentIntentHash?: string; paymentProofBundleHash?: string;
 }
-export type LoanState = "offered" | "accepted" | "funded" | "repaid" | "defaulted";
+export const LOAN_STATES = ["offered", "accepted", "funded", "repaid", "defaulted"] as const;
+export type LoanState = (typeof LOAN_STATES)[number];
 export interface Loan {
   id: string; offerId: string; missionId: string; lenderAccountId: string;
   principalTinybar: bigint; feeTinybar: bigint; state: LoanState;
