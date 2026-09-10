@@ -53,7 +53,21 @@ importers:
 
   agents/lenders: {}
 
-  apps/orchestrator: {}
+  apps/orchestrator:
+    dependencies:
+      '@koven/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+    devDependencies:
+      '@koven/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
 
   apps/web: {}
 

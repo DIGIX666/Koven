@@ -16,6 +16,15 @@
   "references": [
     {
       "path": "../../tsconfig.tools.json"
+    },
+    {
+      "path": "../../packages/audit/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/domain/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/persistence/tsconfig.build.json"
     }
   ]
 }
