@@ -5,8 +5,10 @@
   "type": "module",
   "exports": "./src/index.ts",
   "scripts": {
-    "build": "tsc -b tsconfig.build.json",
+    "build": "tsx scripts/build.ts build && tsc -b tsconfig.build.json",
+    "build:ts": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
+    "setup-release": "tsx scripts/build.ts setup-release",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. --project @koven/zk-policy"
   },

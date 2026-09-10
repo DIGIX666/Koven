@@ -146,7 +146,37 @@ wires, 11 private inputs, no public inputs and exactly three public outputs.
 
 ## Artifact release results
 
-Pending the official artifact release.
+The official setup uses the PSE Perpetual Powers of Tau contribution 0080,
+prepared for phase 2 with 4,096 points. Its source is
+`ppot_0080_12.ptau`, downloaded from the PSE public bucket. The exact file bytes
+have SHA-256
+`35e163120e724a60853d0dd76ec54037f7c7b00584392255f71a4341d5a05c50`,
+and their complete contribution chain and final beacon were verified with
+SnarkJS before the circuit-specific setup.
+
+The circuit-specific phase 2 has one contribution by `kazai777`. This is an
+explicit MVP trust assumption: the setup remains sound only if that contributor
+discarded the generated entropy. The entropy is generated from the operating
+system CSPRNG, passed to SnarkJS over standard input, and never written to the
+transcript or process arguments.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `policy.r1cs` | `8318f80b9ca1c1d8a4db94cfbe1ec74d5d4e82b5b22cd0fcaadb8c4d37149fbd` |
+| `policy.wasm` | `5fe158c5bc17acd301413a275fc20c00c1169b8c79c7b5c29797ebac36d4fa30` |
+| `policy_final.zkey` | `372bbf57cf025e143f91186502d3a18384abc5dc83a76e6250f9338079aff1d7` |
+| `verification_key.json` | `2d23ff5d6058a4de330abee1fdc1b68905da223f9ad8bdb681d598e38b6a257d` |
+| `phase2-transcript.txt` | `b98a55f381e93503a6522c606b17afdeb73b27abaa0e523582d34539f50a2b74` |
+
+The reviewed manifest is `packages/zk-policy/artifacts-manifest.json`. Normal
+builds compile the pinned sources, compare R1CS and WASM hashes, download missing
+official artifacts over HTTPS, verify every byte-level hash, run `snarkjs zkey
+verify`, and check that exporting the zkey reproduces the exact reviewed
+verification-key file. A mismatched cache entry is never replaced automatically.
+
+The setup command refuses to overwrite a release directory. Key rotation
+requires a new circuit or artifact identity, a new reviewed manifest, and a new
+versioned release; existing release assets and hashes are never replaced.
 
 ## Measurements
 
