@@ -112,7 +112,33 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
-  packages/x402: {}
+  packages/testing:
+    dependencies:
+      '@koven/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../hedera
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../x402
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.2.0)(strip-ansi@7.1.2)
+    devDependencies:
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+
+  packages/x402:
+    dependencies:
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/zk-policy: {}
 

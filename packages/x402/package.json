@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
+  "dependencies": {
+    "@koven/domain": "workspace:*"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
