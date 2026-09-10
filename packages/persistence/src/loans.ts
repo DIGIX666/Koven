@@ -1,7 +1,13 @@
 import type { Loan, LoanState } from "@koven/domain";
 
 import type { KovenDatabase } from "./db.js";
-import { tinybarFromText, tinybarToText } from "./db.js";
+import {
+  isUniqueConstraint,
+  PersistenceConflict,
+  PersistenceConflictError,
+  tinybarFromText,
+  tinybarToText,
+} from "./db.js";
 
 interface LoanRow {
   id: string;
@@ -16,25 +22,33 @@ interface LoanRow {
 }
 
 export function createLoan(database: KovenDatabase, loan: Loan): void {
-  database.prepare(`
-    INSERT INTO loans (
-      id, offer_id, mission_id, lender_account_id,
-      principal_tinybar, fee_tinybar, state, funding_tx_id, repayment_tx_id
-    ) VALUES (
-      @id, @offerId, @missionId, @lenderAccountId,
-      @principalTinybar, @feeTinybar, @state, @fundingTxId, @repaymentTxId
-    )
-  `).run({
-    id: loan.id,
-    offerId: loan.offerId,
-    missionId: loan.missionId,
-    lenderAccountId: loan.lenderAccountId,
-    principalTinybar: tinybarToText(loan.principalTinybar),
-    feeTinybar: tinybarToText(loan.feeTinybar),
-    state: loan.state,
-    fundingTxId: loan.fundingTxId ?? null,
-    repaymentTxId: loan.repaymentTxId ?? null,
-  });
+  try {
+    database.prepare(`
+      INSERT INTO loans (
+        id, offer_id, mission_id, lender_account_id,
+        principal_tinybar, fee_tinybar, state, funding_tx_id, repayment_tx_id
+      ) VALUES (
+        @id, @offerId, @missionId, @lenderAccountId,
+        @principalTinybar, @feeTinybar, @state, @fundingTxId, @repaymentTxId
+      )
+    `).run({
+      id: loan.id,
+      offerId: loan.offerId,
+      missionId: loan.missionId,
+      lenderAccountId: loan.lenderAccountId,
+      principalTinybar: tinybarToText(loan.principalTinybar),
+      feeTinybar: tinybarToText(loan.feeTinybar),
+      state: loan.state,
+      fundingTxId: loan.fundingTxId ?? null,
+      repaymentTxId: loan.repaymentTxId ?? null,
+    });
+  } catch (error) {
+    if (!isUniqueConstraint(error)) throw error;
+    throw new PersistenceConflictError(
+      PersistenceConflict.LOAN_REGISTRATION_CONFLICT,
+      `Loan already exists: ${loan.id}`,
+    );
+  }
 }
 
 export function getLoan(database: KovenDatabase, id: string): Loan | undefined {
@@ -63,20 +77,46 @@ export function getLoan(database: KovenDatabase, id: string): Loan | undefined {
 export function updateLoanState(
   database: KovenDatabase,
   id: string,
-  state: LoanState,
+  from: LoanState,
+  to: LoanState,
   transactionIds: { fundingTxId?: string; repaymentTxId?: string } = {},
 ): boolean {
   const result = database.prepare(`
     UPDATE loans
-    SET state = @state,
+    SET state = @to,
         funding_tx_id = COALESCE(@fundingTxId, funding_tx_id),
         repayment_tx_id = COALESCE(@repaymentTxId, repayment_tx_id)
-    WHERE id = @id
+    WHERE id = @id AND state = @from
+      AND (@fundingTxId IS NULL OR funding_tx_id IS NULL OR funding_tx_id = @fundingTxId)
+      AND (@repaymentTxId IS NULL OR repayment_tx_id IS NULL OR repayment_tx_id = @repaymentTxId)
   `).run({
     id,
-    state,
+    from,
+    to,
     fundingTxId: transactionIds.fundingTxId ?? null,
     repaymentTxId: transactionIds.repaymentTxId ?? null,
   });
-  return result.changes === 1;
+  if (result.changes === 1) return true;
+
+  const current = database.prepare(`
+    SELECT state, funding_tx_id, repayment_tx_id FROM loans WHERE id = ?
+  `).get(id) as Pick<LoanRow, "state" | "funding_tx_id" | "repayment_tx_id"> | undefined;
+  if (current === undefined || current.state !== from) return false;
+  if (transactionIds.fundingTxId !== undefined
+    && current.funding_tx_id !== null
+    && current.funding_tx_id !== transactionIds.fundingTxId) {
+    throw new PersistenceConflictError(
+      PersistenceConflict.LOAN_REGISTRATION_CONFLICT,
+      `Loan ${id} already has a different funding transaction`,
+    );
+  }
+  if (transactionIds.repaymentTxId !== undefined
+    && current.repayment_tx_id !== null
+    && current.repayment_tx_id !== transactionIds.repaymentTxId) {
+    throw new PersistenceConflictError(
+      PersistenceConflict.REPAYMENT_TRANSACTION_CONFLICT,
+      `Loan ${id} already has a different repayment transaction`,
+    );
+  }
+  return false;
 }

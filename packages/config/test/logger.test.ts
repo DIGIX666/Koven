@@ -40,4 +40,20 @@ describe("redacting logger", () => {
     expect(capture.output()).not.toContain("child-secret");
     expect(capture.output()).toContain("signer");
   });
+
+  test("redacts new private-key names and signing material at arbitrary depth", () => {
+    const capture = captureLogs();
+    const logger = createLogger({ destination: capture.destination })
+      .child({ provider: { PROVIDER_A_PRIVATE_KEY: "provider-child-secret" } });
+
+    logger.info({
+      context: { config: { hedera: { privateKey: "deep-secret" } } },
+      payload: { rawSignedTransaction: "signed-bytes" },
+    });
+
+    expect(capture.output()).toContain(REDACTION_CENSOR);
+    expect(capture.output()).not.toContain("provider-child-secret");
+    expect(capture.output()).not.toContain("deep-secret");
+    expect(capture.output()).not.toContain("signed-bytes");
+  });
 });

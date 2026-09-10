@@ -37,10 +37,10 @@ review shared contracts before merge.
 - Workspace commands use shared TypeScript, ESLint and Vitest configuration and
   must execute real package checks. Dependencies are pinned, and packages with
   native install steps are explicitly allowed through the root pnpm policy.
-- Environment configuration is validated once at service startup and projected
-  into service-specific views. Consumer and orchestrator views cannot expose the
-  consumer private key. Pino redacts private keys, signatures and raw signed
-  transaction data, including values inherited by child loggers.
+- Each service validates only its required environment variables at startup, so
+  unrelated secrets do not need to exist in that process. Consumer and orchestrator
+  views cannot expose the consumer private key. Pino recursively redacts private
+  keys, signatures and raw signed transaction data, including child bindings.
 - Mission lifecycle rules are represented by one exhaustive transition table.
   `assertTransition` rejects every undocumented edge with
   `illegal_state_transition`; `defaulted` and `closed` are terminal states.
@@ -55,7 +55,9 @@ review shared contracts before merge.
   caps with `bigint`, then compare-and-swap both counters. Any conflict or cap
   failure rolls back the nonce and every counter update. A successful reservation
   is retained when the external payment outcome is uncertain.
-- B0.3 persists local event payloads and their publication status. Durable retry
+- Identical idempotency replays return the stored result; reusing a key with a
+  different request hash raises `idempotency_conflict`. Local events use a database
+  sequence to preserve insertion order when timestamps collide. Durable retry
   workers and service-specific outboxes remain in their owning later issues.
 
 ## PR contract refinements

@@ -1,7 +1,10 @@
+import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Mission } from "@koven/domain";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { ErrorCode, type Mission } from "@koven/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -19,11 +22,31 @@ import {
   MAX_TINYBAR,
   openDatabase,
   reserveSpending,
+  updateLoanState,
   type KovenDatabase,
 } from "../src/index.js";
 
 const timestamp = "2026-09-07T10:00:00.000Z";
 const hash = "a".repeat(64);
+
+interface ReservationProcessResult {
+  outcome: "ok" | string;
+}
+
+const executeFile = promisify(execFile);
+
+async function launchReservationProcess(
+  databasePath: string,
+  startAt: number,
+  nonce: string,
+  paymentCommitment: string,
+): Promise<ReservationProcessResult> {
+  const script = fileURLToPath(new URL("./reservation.worker.ts", import.meta.url));
+  const { stdout } = await executeFile(process.execPath, [
+    "--import", "tsx/esm", script, databasePath, String(startAt), nonce, paymentCommitment, timestamp,
+  ]);
+  return JSON.parse(stdout) as ReservationProcessResult;
+}
 
 function mission(
   id: string,
@@ -114,7 +137,7 @@ describe("SQLite persistence", () => {
       .toEqual({ count: 1 });
   });
 
-  it("returns a controlled conflict for a duplicate idempotency key", () => {
+  it("returns the stored idempotency result for a replay and rejects conflicting content", () => {
     const database = open();
     const result = {
       key: "callback-1",
@@ -123,14 +146,88 @@ describe("SQLite persistence", () => {
       response: { status: "accepted" },
       createdAt: timestamp,
     };
-    createIdempotencyResult(database, result);
-
-    expect(() => createIdempotencyResult(database, result)).toThrow(
-      expect.objectContaining({
+    expect(createIdempotencyResult(database, result)).toEqual(result);
+    expect(createIdempotencyResult(database, { ...result, response: { status: "ignored" } }))
+      .toEqual(result);
+    expect(() => createIdempotencyResult(database, { ...result, requestHash: "b".repeat(64) }))
+      .toThrow(expect.objectContaining({
         name: "PersistenceConflictError",
-        conflict: "duplicate_idempotency_key",
-      }),
-    );
+        conflict: ErrorCode.IDEMPOTENCY_CONFLICT,
+      }));
+  });
+
+  it("reports duplicate entities through typed persistence conflicts", () => {
+    const database = open();
+    createSpendingSession(database, { id: "session-1", spendingCapTinybar: 100n, spentTinybar: 0n });
+    createMission(database, mission("mission-1"));
+    const loan = {
+      id: "loan-1",
+      offerId: "offer-1",
+      missionId: "mission-1",
+      lenderAccountId: "0.0.20",
+      principalTinybar: 90n,
+      feeTinybar: 10n,
+      state: "offered" as const,
+    };
+    createLoan(database, loan);
+    const event = {
+      id: "event-1",
+      missionId: "mission-1",
+      type: "mission-created" as const,
+      payloadHash: hash,
+      payload: {},
+      occurredAt: timestamp,
+    };
+    createEvent(database, event);
+
+    for (const duplicate of [
+      () => createSpendingSession(database, { id: "session-1", spendingCapTinybar: 100n, spentTinybar: 0n }),
+      () => createMission(database, mission("mission-1")),
+      () => createLoan(database, loan),
+      () => createEvent(database, event),
+    ]) {
+      expect(duplicate).toThrow(expect.objectContaining({ name: "PersistenceConflictError" }));
+    }
+  });
+
+  it("rejects invalid persisted mission and loan states", () => {
+    const database = open();
+    createMission(database, mission("mission-1"));
+    createLoan(database, {
+      id: "loan-1",
+      offerId: "offer-1",
+      missionId: "mission-1",
+      lenderAccountId: "0.0.20",
+      principalTinybar: 90n,
+      feeTinybar: 10n,
+      state: "offered",
+    });
+
+    expect(() => database.prepare("UPDATE missions SET state = 'bogus' WHERE id = 'mission-1'").run())
+      .toThrow(/CHECK constraint failed/);
+    expect(() => database.prepare("UPDATE loans SET state = 'bogus' WHERE id = 'loan-1'").run())
+      .toThrow(/CHECK constraint failed/);
+  });
+
+  it("compare-and-swaps loan state and rejects conflicting transaction ids", () => {
+    const database = open();
+    createMission(database, mission("mission-1"));
+    createLoan(database, {
+      id: "loan-1",
+      offerId: "offer-1",
+      missionId: "mission-1",
+      lenderAccountId: "0.0.20",
+      principalTinybar: 90n,
+      feeTinybar: 10n,
+      state: "offered",
+    });
+
+    expect(updateLoanState(database, "loan-1", "offered", "funded", { fundingTxId: "tx-1" }))
+      .toBe(true);
+    expect(updateLoanState(database, "loan-1", "offered", "accepted")).toBe(false);
+    expect(() => updateLoanState(database, "loan-1", "funded", "repaid", { fundingTxId: "tx-2" }))
+      .toThrow(expect.objectContaining({ conflict: ErrorCode.LOAN_REGISTRATION_CONFLICT }));
+    expect(getLoan(database, "loan-1")).toMatchObject({ state: "funded", fundingTxId: "tx-1" });
   });
 
   it("rejects reuse of either a mission nonce or a payment commitment", () => {
@@ -172,33 +269,72 @@ describe("SQLite persistence", () => {
       paymentCommitment: "overflow",
       amountTinybar: 41n,
       consumedAt: timestamp,
-    })).toThrow(expect.objectContaining({ conflict: "cap_exceeded" }));
+    })).toThrow(expect.objectContaining({ conflict: ErrorCode.CUMULATIVE_BUDGET_EXCEEDED }));
 
     expect(getMission(database, "mission-1")?.spentTinybar).toBe(60n);
     expect(getSpendingReservation(database, "mission-1", "1")).toBeUndefined();
   });
 
-  it("prevents reservations from separate connections jointly exceeding a cap", () => {
-    const first = open("shared.sqlite");
-    const second = open("shared.sqlite");
-    createMission(first, mission("mission-1"));
-    reserveSpending(first, {
-      missionId: "mission-1",
-      nonce: "1",
-      paymentCommitment: "commitment-1",
-      amountTinybar: 60n,
-      consumedAt: timestamp,
-    });
+  it("distinguishes invalid, single-payment, and cumulative cap failures", () => {
+    const database = open();
+    createMission(database, mission("mission-1", 100n, 60n));
 
-    expect(() => reserveSpending(second, {
-      missionId: "mission-1",
-      nonce: "2",
-      paymentCommitment: "commitment-2",
-      amountTinybar: 50n,
-      consumedAt: timestamp,
-    })).toThrow(expect.objectContaining({ conflict: "cap_exceeded" }));
-    expect(getMission(second, "mission-1")?.spentTinybar).toBe(60n);
-    expect(getSpendingReservation(second, "mission-1", "2")).toBeUndefined();
+    expect(() => reserveSpending(database, {
+      missionId: "mission-1", nonce: "zero", paymentCommitment: "zero",
+      amountTinybar: 0n, consumedAt: timestamp,
+    })).toThrow(RangeError);
+    expect(() => reserveSpending(database, {
+      missionId: "mission-1", nonce: "single", paymentCommitment: "single",
+      amountTinybar: 101n, consumedAt: timestamp,
+    })).toThrow(expect.objectContaining({ conflict: ErrorCode.CAP_EXCEEDED }));
+    expect(() => reserveSpending(database, {
+      missionId: "mission-1", nonce: "cumulative", paymentCommitment: "cumulative",
+      amountTinybar: 41n, consumedAt: timestamp,
+    })).toThrow(expect.objectContaining({ conflict: ErrorCode.CUMULATIVE_BUDGET_EXCEEDED }));
+    expect(database.prepare("SELECT COUNT(*) AS count FROM consumed_nonces").get())
+      .toEqual({ count: 0 });
+  });
+
+  it("preserves insertion order when event timestamps collide", () => {
+    const database = open();
+    for (const id of ["e3", "e1", "e2"]) {
+      createEvent(database, {
+        id,
+        missionId: "mission-1",
+        type: "mission-created",
+        payloadHash: hash,
+        payload: { id },
+        occurredAt: timestamp,
+      });
+    }
+
+    expect(listMissionEvents(database, "mission-1").map(event => event.id))
+      .toEqual(["e3", "e1", "e2"]);
+  });
+
+  it("prevents concurrent reservations in separate workers from jointly exceeding a cap", async () => {
+    const databasePath = join(directory, "shared.sqlite");
+    const database = openDatabase(databasePath);
+    createMission(database, mission("mission-1"));
+    database.close();
+
+    const startAt = Date.now() + 750;
+    const results = await Promise.all([
+      launchReservationProcess(databasePath, startAt, "1", "commitment-1"),
+      launchReservationProcess(databasePath, startAt, "2", "commitment-2"),
+    ]);
+
+    expect(results.map(result => result.outcome).sort()).toEqual([
+      ErrorCode.CUMULATIVE_BUDGET_EXCEEDED,
+      "ok",
+    ]);
+    const verification = open("shared.sqlite");
+    expect(getMission(verification, "mission-1")?.spentTinybar).toBe(60n);
+    const reservations = [
+      getSpendingReservation(verification, "mission-1", "1"),
+      getSpendingReservation(verification, "mission-1", "2"),
+    ];
+    expect(reservations.filter(Boolean)).toHaveLength(1);
   });
 
   it("atomically enforces a session cap shared by multiple missions", () => {
@@ -220,7 +356,7 @@ describe("SQLite persistence", () => {
       paymentCommitment: "commitment-2",
       amountTinybar: 50n,
       consumedAt: timestamp,
-    })).toThrow(expect.objectContaining({ conflict: "cap_exceeded" }));
+    })).toThrow(expect.objectContaining({ conflict: ErrorCode.CUMULATIVE_BUDGET_EXCEEDED }));
     expect(getMission(database, "mission-2")?.spentTinybar).toBe(0n);
     expect(getSpendingSession(database, "session-1")?.spentTinybar).toBe(60n);
     expect(getSpendingReservation(database, "mission-2", "1")).toBeUndefined();

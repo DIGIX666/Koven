@@ -1,5 +1,5 @@
 import type { KovenDatabase } from "./db.js";
-import { PersistenceConflictError } from "./db.js";
+import { isUniqueConstraint, PersistenceConflict, PersistenceConflictError } from "./db.js";
 
 interface IdempotencyRow {
   key: string;
@@ -21,7 +21,7 @@ export interface IdempotencyResult<T = unknown> {
 export function createIdempotencyResult<T>(
   database: KovenDatabase,
   result: IdempotencyResult<T>,
-): void {
+): IdempotencyResult<T> {
   try {
     database.prepare(`
       INSERT INTO idempotency_results (key, request_hash, status_code, response_json, created_at)
@@ -33,11 +33,14 @@ export function createIdempotencyResult<T>(
       responseJson: JSON.stringify(result.response),
       createdAt: result.createdAt,
     });
+    return result;
   } catch (error) {
     if (isUniqueConstraint(error)) {
+      const existing = getIdempotencyResult<T>(database, result.key);
+      if (existing !== undefined && existing.requestHash === result.requestHash) return existing;
       throw new PersistenceConflictError(
-        "duplicate_idempotency_key",
-        `Idempotency key already exists: ${result.key}`,
+        PersistenceConflict.IDEMPOTENCY_CONFLICT,
+        `Idempotency key was reused with different content: ${result.key}`,
       );
     }
     throw error;
@@ -61,8 +64,4 @@ export function getIdempotencyResult<T = unknown>(
     response: JSON.parse(row.response_json) as T,
     createdAt: row.created_at,
   };
-}
-
-function isUniqueConstraint(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "SQLITE_CONSTRAINT_PRIMARYKEY";
 }

@@ -43,6 +43,17 @@ describe("mission state transitions", () => {
     }
   });
 
+  it("rejects an unknown runtime state with the transition error", () => {
+    expect(() => assertTransition("corrupted" as MissionState, "closed")).toThrow(
+      expect.objectContaining({
+        name: "IllegalStateTransitionError",
+        code: ErrorCode.ILLEGAL_STATE_TRANSITION,
+        from: "corrupted",
+        to: "closed",
+      }),
+    );
+  });
+
   it.each(["defaulted", "closed"] as const)(
     "treats %s as a terminal state",
     (terminalState) => {

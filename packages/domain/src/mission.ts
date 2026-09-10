@@ -44,8 +44,8 @@ export class IllegalStateTransitionError extends Error {
   readonly code = ErrorCode.ILLEGAL_STATE_TRANSITION;
 
   constructor(
-    readonly from: MissionState,
-    readonly to: MissionState,
+    readonly from: string,
+    readonly to: string,
   ) {
     super(`Illegal mission state transition: ${from} -> ${to}`);
     this.name = "IllegalStateTransitionError";
@@ -53,9 +53,11 @@ export class IllegalStateTransitionError extends Error {
 }
 
 export function assertTransition(from: MissionState, to: MissionState): void {
-  const allowedTransitions: readonly MissionState[] = ALLOWED_TRANSITIONS[from];
+  const allowedTransitions = (
+    ALLOWED_TRANSITIONS as Partial<Record<string, readonly MissionState[]>>
+  )[from];
 
-  if (!allowedTransitions.includes(to)) {
+  if (allowedTransitions === undefined || !allowedTransitions.includes(to)) {
     throw new IllegalStateTransitionError(from, to);
   }
 }

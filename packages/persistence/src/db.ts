@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { ErrorCode } from "@koven/domain";
 
 import { applyMigrations } from "./migrations.js";
 
@@ -6,12 +7,25 @@ export const MAX_TINYBAR = 18_446_744_073_709_551_615n;
 
 export type KovenDatabase = Database.Database;
 
-export type PersistenceConflict =
-  | "cap_exceeded"
-  | "concurrent_update"
-  | "duplicate_idempotency_key"
-  | "nonce_already_used"
-  | "payment_commitment_already_used";
+export const PersistenceConflict = {
+  CAP_EXCEEDED: ErrorCode.CAP_EXCEEDED,
+  CUMULATIVE_BUDGET_EXCEEDED: ErrorCode.CUMULATIVE_BUDGET_EXCEEDED,
+  IDEMPOTENCY_CONFLICT: ErrorCode.IDEMPOTENCY_CONFLICT,
+  NONCE_ALREADY_USED: ErrorCode.NONCE_ALREADY_USED,
+  LOAN_REGISTRATION_CONFLICT: ErrorCode.LOAN_REGISTRATION_CONFLICT,
+  CONCURRENT_UPDATE: "concurrent_update",
+  PAYMENT_COMMITMENT_ALREADY_USED: "payment_commitment_already_used",
+  ENTITY_ALREADY_EXISTS: "entity_already_exists",
+  EVENT_ALREADY_EXISTS: "event_already_exists",
+  REPAYMENT_TRANSACTION_CONFLICT: "repayment_transaction_conflict",
+} as const;
+
+export type PersistenceConflict = (typeof PersistenceConflict)[keyof typeof PersistenceConflict];
+
+export function isUniqueConstraint(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return error.code === "SQLITE_CONSTRAINT_PRIMARYKEY" || error.code === "SQLITE_CONSTRAINT_UNIQUE";
+}
 
 export class PersistenceConflictError extends Error {
   constructor(

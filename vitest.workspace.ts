@@ -5,5 +5,5 @@ export default defineWorkspace([
   "agents/*/vitest.config.ts",
   "services/*/vitest.config.ts",
   "apps/*/vitest.config.ts",
-  "tests/e2e/vitest.config.ts",
+  "tests/*/vitest.config.ts",
 ]);

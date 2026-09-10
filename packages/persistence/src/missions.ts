@@ -2,7 +2,13 @@ import type { Mission, MissionState } from "@koven/domain";
 import { assertTransition } from "@koven/domain";
 
 import type { KovenDatabase } from "./db.js";
-import { PersistenceConflictError, tinybarFromText, tinybarToText } from "./db.js";
+import {
+  isUniqueConstraint,
+  PersistenceConflict,
+  PersistenceConflictError,
+  tinybarFromText,
+  tinybarToText,
+} from "./db.js";
 
 interface MissionRow {
   id: string;
@@ -34,14 +40,22 @@ export interface PersistedMission extends Mission {
 }
 
 export function createSpendingSession(database: KovenDatabase, session: SpendingSession): void {
-  database.prepare(`
-    INSERT INTO spending_sessions (id, spending_cap_tinybar, spent_tinybar)
-    VALUES (@id, @spendingCapTinybar, @spentTinybar)
-  `).run({
-    id: session.id,
-    spendingCapTinybar: tinybarToText(session.spendingCapTinybar),
-    spentTinybar: tinybarToText(session.spentTinybar),
-  });
+  try {
+    database.prepare(`
+      INSERT INTO spending_sessions (id, spending_cap_tinybar, spent_tinybar)
+      VALUES (@id, @spendingCapTinybar, @spentTinybar)
+    `).run({
+      id: session.id,
+      spendingCapTinybar: tinybarToText(session.spendingCapTinybar),
+      spentTinybar: tinybarToText(session.spentTinybar),
+    });
+  } catch (error) {
+    if (!isUniqueConstraint(error)) throw error;
+    throw new PersistenceConflictError(
+      PersistenceConflict.ENTITY_ALREADY_EXISTS,
+      `Spending session already exists: ${session.id}`,
+    );
+  }
 }
 
 export function getSpendingSession(
@@ -66,28 +80,36 @@ export function createMission(
   mission: Mission,
   sessionId?: string,
 ): void {
-  database.prepare(`
-    INSERT INTO missions (
-      id, state, spending_cap_tinybar, spent_tinybar,
-      approved_recipients_root, target_ref, target_sha256,
-      session_id, created_at, updated_at
-    ) VALUES (
-      @id, @state, @spendingCapTinybar, @spentTinybar,
-      @approvedRecipientsRoot, @targetRef, @targetSha256,
-      @sessionId, @createdAt, @updatedAt
-    )
-  `).run({
-    id: mission.id,
-    state: mission.state,
-    spendingCapTinybar: tinybarToText(mission.spendingCapTinybar),
-    spentTinybar: tinybarToText(mission.spentTinybar),
-    approvedRecipientsRoot: mission.approvedRecipientsRoot,
-    targetRef: mission.targetRef,
-    targetSha256: mission.targetSha256,
-    sessionId: sessionId ?? null,
-    createdAt: mission.createdAt,
-    updatedAt: mission.updatedAt,
-  });
+  try {
+    database.prepare(`
+      INSERT INTO missions (
+        id, state, spending_cap_tinybar, spent_tinybar,
+        approved_recipients_root, target_ref, target_sha256,
+        session_id, created_at, updated_at
+      ) VALUES (
+        @id, @state, @spendingCapTinybar, @spentTinybar,
+        @approvedRecipientsRoot, @targetRef, @targetSha256,
+        @sessionId, @createdAt, @updatedAt
+      )
+    `).run({
+      id: mission.id,
+      state: mission.state,
+      spendingCapTinybar: tinybarToText(mission.spendingCapTinybar),
+      spentTinybar: tinybarToText(mission.spentTinybar),
+      approvedRecipientsRoot: mission.approvedRecipientsRoot,
+      targetRef: mission.targetRef,
+      targetSha256: mission.targetSha256,
+      sessionId: sessionId ?? null,
+      createdAt: mission.createdAt,
+      updatedAt: mission.updatedAt,
+    });
+  } catch (error) {
+    if (!isUniqueConstraint(error)) throw error;
+    throw new PersistenceConflictError(
+      PersistenceConflict.ENTITY_ALREADY_EXISTS,
+      `Mission already exists: ${mission.id}`,
+    );
+  }
 }
 
 export function getMission(database: KovenDatabase, id: string): PersistedMission | undefined {
@@ -133,7 +155,7 @@ export function transitionMission(
 
   if (result.changes !== 1) {
     throw new PersistenceConflictError(
-      "concurrent_update",
+      PersistenceConflict.CONCURRENT_UPDATE,
       `Mission ${id} is no longer in expected state ${from}`,
     );
   }

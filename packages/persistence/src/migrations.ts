@@ -1,4 +1,9 @@
 import type Database from "better-sqlite3";
+import { LOAN_STATES, MISSION_STATES } from "@koven/domain";
+
+const sqlValues = (values: readonly string[]) => values.map(value => `'${value}'`).join(", ");
+const missionStates = sqlValues(MISSION_STATES);
+const loanStates = sqlValues(LOAN_STATES);
 
 export interface Migration {
   readonly version: number;
@@ -29,7 +34,7 @@ export const MIGRATIONS: readonly Migration[] = [
 
       CREATE TABLE missions (
         id TEXT PRIMARY KEY,
-        state TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN (${missionStates})),
         spending_cap_tinybar TEXT NOT NULL CHECK (
           spending_cap_tinybar = '0' OR (
             spending_cap_tinybar GLOB '[1-9]*' AND
@@ -67,7 +72,7 @@ export const MIGRATIONS: readonly Migration[] = [
             fee_tinybar NOT GLOB '*[^0-9]*'
           )
         ),
-        state TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN (${loanStates})),
         funding_tx_id TEXT,
         repayment_tx_id TEXT,
         FOREIGN KEY (mission_id) REFERENCES missions(id)
@@ -97,7 +102,8 @@ export const MIGRATIONS: readonly Migration[] = [
       );
 
       CREATE TABLE events (
-        id TEXT PRIMARY KEY,
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
         mission_id TEXT NOT NULL,
         type TEXT NOT NULL,
         payload_hash TEXT NOT NULL,
@@ -107,8 +113,8 @@ export const MIGRATIONS: readonly Migration[] = [
         published_at TEXT
       );
 
-      CREATE INDEX events_mission_occurred_idx
-        ON events (mission_id, occurred_at, id);
+      CREATE INDEX events_mission_sequence_idx
+        ON events (mission_id, seq);
     `,
   },
 ] as const;

@@ -16,6 +16,7 @@ const validEnvironment = {
   HEDERA_OPERATOR_ID: "0.0.1",
   HEDERA_OPERATOR_PRIVATE_KEY: "operator-secret",
   HEDERA_MIRROR_NODE_URL: "https://testnet.mirrornode.hedera.com",
+  X402_NETWORK: "hedera:testnet",
   X402_FACILITATOR_URL: "https://api.testnet.blocky402.com",
   X402_PAY_TO_ACCOUNT_ID: "0.0.2",
   X402_ASSET: "0.0.0",
@@ -79,6 +80,7 @@ describe("environment loading", () => {
   test("ignores unrelated process variables and rejects invalid Koven values", () => {
     expect(loadConsumerEnv({ ...validEnvironment, SHELL: "/bin/zsh" })).toEqual({
       accountId: "0.0.3",
+      x402Network: "hedera:testnet",
       resourceServerPort: 3003,
       restrictedSignerPort: 3004,
     });
@@ -87,6 +89,30 @@ describe("environment loading", () => {
   });
 
   test("normalizes the legacy HBAR label to the canonical x402 asset id", () => {
-    expect(loadResourceServerEnv({ ...validEnvironment, X402_ASSET: "HBAR" }).asset).toBe("0.0.0");
+    expect(loadResourceServerEnv({ ...validEnvironment, X402_ASSET: "HBAR" })).toMatchObject({
+      network: "hedera:testnet",
+      asset: "0.0.0",
+    });
+  });
+
+  test("loads a service without requiring secrets owned by another process", () => {
+    expect(loadConsumerEnv({
+      X402_NETWORK: "hedera:testnet",
+      CONSUMER_ACCOUNT_ID: "0.0.3",
+      RESOURCE_SERVER_PORT: "3003",
+      RESTRICTED_SIGNER_PORT: "3004",
+    })).toEqual({
+      accountId: "0.0.3",
+      x402Network: "hedera:testnet",
+      resourceServerPort: 3003,
+      restrictedSignerPort: 3004,
+    });
+
+    expect(() => loadConsumerEnv({
+      X402_NETWORK: "hedera-mainnet",
+      CONSUMER_ACCOUNT_ID: "0.0.3",
+      RESOURCE_SERVER_PORT: "3003",
+      RESTRICTED_SIGNER_PORT: "3004",
+    })).toThrowError(/X402_NETWORK/);
   });
 });

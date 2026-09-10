@@ -13,11 +13,12 @@ const port = z.preprocess(emptyAsMissing, z.coerce.number().int().min(1).max(65_
 const decimal = z.preprocess(emptyAsMissing, z.string().regex(/^(0|[1-9]\d*)$/));
 const hbarAsset = z.preprocess(value => value === "HBAR" ? "0.0.0" : value, z.literal("0.0.0"));
 
-const environmentSchema = z.object({
+const fields = {
   HEDERA_NETWORK: z.literal("testnet"),
   HEDERA_OPERATOR_ID: accountId,
   HEDERA_OPERATOR_PRIVATE_KEY: requiredString,
   HEDERA_MIRROR_NODE_URL: url,
+  X402_NETWORK: z.literal("hedera:testnet"),
   X402_FACILITATOR_URL: url,
   X402_PAY_TO_ACCOUNT_ID: accountId,
   X402_ASSET: hbarAsset,
@@ -36,9 +37,34 @@ const environmentSchema = z.object({
   RESOURCE_SERVER_PORT: port,
   RESTRICTED_SIGNER_PORT: port,
   DATABASE_URL: requiredString,
-});
+} as const;
 
-type Environment = z.infer<typeof environmentSchema>;
+const schema = <K extends keyof typeof fields>(...keys: K[]) => z.object(
+  Object.fromEntries(keys.map(key => [key, fields[key]])) as Pick<typeof fields, K>,
+);
+
+const signerSchema = schema(
+  "HEDERA_NETWORK", "HEDERA_MIRROR_NODE_URL", "X402_NETWORK", "CONSUMER_ACCOUNT_ID",
+  "CONSUMER_PRIVATE_KEY", "RESTRICTED_SIGNER_PORT", "DATABASE_URL",
+  "DEFAULT_MISSION_SPENDING_CAP", "APPROVED_RECIPIENTS_ROOT",
+);
+const orchestratorSchema = schema(
+  "CONSUMER_ACCOUNT_ID", "ORCHESTRATOR_PORT", "DIRECTORY_PORT", "RESOURCE_SERVER_PORT",
+  "RESTRICTED_SIGNER_PORT", "DATABASE_URL",
+);
+const consumerSchema = schema(
+  "X402_NETWORK", "CONSUMER_ACCOUNT_ID", "RESOURCE_SERVER_PORT", "RESTRICTED_SIGNER_PORT",
+);
+const resourceServerSchema = schema(
+  "X402_NETWORK", "X402_FACILITATOR_URL", "X402_PAY_TO_ACCOUNT_ID", "X402_ASSET",
+  "RESOURCE_SERVER_PORT",
+);
+const directorySchema = schema("DIRECTORY_PORT", "DATABASE_URL");
+const webSchema = schema("WEB_PORT", "ORCHESTRATOR_PORT", "DIRECTORY_PORT");
+const operatorSchema = schema(
+  "HEDERA_NETWORK", "HEDERA_OPERATOR_ID", "HEDERA_OPERATOR_PRIVATE_KEY",
+  "HEDERA_MIRROR_NODE_URL", "HCS_AUDIT_TOPIC_ID",
+);
 
 export class EnvironmentValidationError extends Error {
   readonly keys: readonly string[];
@@ -50,8 +76,8 @@ export class EnvironmentValidationError extends Error {
   }
 }
 
-function parseEnvironment(source: EnvironmentSource): Environment {
-  const result = environmentSchema.safeParse(source);
+function parseEnvironment<S extends z.ZodTypeAny>(schemaToParse: S, source: EnvironmentSource): z.infer<S> {
+  const result = schemaToParse.safeParse(source);
   if (result.success) return result.data;
 
   const keys = [...new Set(result.error.issues.map(issue => String(issue.path[0] ?? "environment")))].sort();
@@ -60,6 +86,7 @@ function parseEnvironment(source: EnvironmentSource): Environment {
 
 export interface SignerEnv {
   network: "testnet";
+  x402Network: "hedera:testnet";
   accountId: string;
   privateKey: string;
   mirrorNodeUrl: string;
@@ -80,6 +107,7 @@ export interface OrchestratorEnv {
 
 export interface ConsumerEnv {
   accountId: string;
+  x402Network: "hedera:testnet";
   resourceServerPort: number;
   restrictedSignerPort: number;
 }
@@ -94,6 +122,7 @@ export interface LenderEnv {
 }
 
 export interface ResourceServerEnv {
+  network: "hedera:testnet";
   facilitatorUrl: string;
   payToAccountId: string;
   asset: "0.0.0";
@@ -119,11 +148,12 @@ export interface OperatorEnv {
   auditTopicId: string;
 }
 
-/** Parse the complete environment once at restricted-signer process startup. */
+/** Validates only the variables required by the restricted signer. */
 export function loadSignerEnv(source: EnvironmentSource = process.env): SignerEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(signerSchema, source);
   return Object.freeze({
     network: env.HEDERA_NETWORK,
+    x402Network: env.X402_NETWORK,
     accountId: env.CONSUMER_ACCOUNT_ID,
     privateKey: env.CONSUMER_PRIVATE_KEY,
     mirrorNodeUrl: env.HEDERA_MIRROR_NODE_URL,
@@ -135,7 +165,7 @@ export function loadSignerEnv(source: EnvironmentSource = process.env): SignerEn
 }
 
 export function loadOrchestratorEnv(source: EnvironmentSource = process.env): OrchestratorEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(orchestratorSchema, source);
   return Object.freeze({
     consumerAccountId: env.CONSUMER_ACCOUNT_ID,
     port: env.ORCHESTRATOR_PORT,
@@ -147,20 +177,42 @@ export function loadOrchestratorEnv(source: EnvironmentSource = process.env): Or
 }
 
 export function loadConsumerEnv(source: EnvironmentSource = process.env): ConsumerEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(consumerSchema, source);
   return Object.freeze({
     accountId: env.CONSUMER_ACCOUNT_ID,
+    x402Network: env.X402_NETWORK,
     resourceServerPort: env.RESOURCE_SERVER_PORT,
     restrictedSignerPort: env.RESTRICTED_SIGNER_PORT,
   });
 }
 
 export function loadLenderEnv(lender: "A" | "B", source: EnvironmentSource = process.env): LenderEnv {
-  const env = parseEnvironment(source);
+  const commonKeys = [
+    "HEDERA_NETWORK", "CONSUMER_ACCOUNT_ID", "HEDERA_MIRROR_NODE_URL", "HCS_AUDIT_TOPIC_ID",
+  ] as const;
+  if (lender === "A") {
+    const env = parseEnvironment(
+      schema(...commonKeys, "LENDER_A_ACCOUNT_ID", "LENDER_A_PRIVATE_KEY"),
+      source,
+    );
+    return Object.freeze({
+      network: env.HEDERA_NETWORK,
+      accountId: env.LENDER_A_ACCOUNT_ID,
+      privateKey: env.LENDER_A_PRIVATE_KEY,
+      consumerAccountId: env.CONSUMER_ACCOUNT_ID,
+      mirrorNodeUrl: env.HEDERA_MIRROR_NODE_URL,
+      auditTopicId: env.HCS_AUDIT_TOPIC_ID,
+    });
+  }
+
+  const env = parseEnvironment(
+    schema(...commonKeys, "LENDER_B_ACCOUNT_ID", "LENDER_B_PRIVATE_KEY"),
+    source,
+  );
   return Object.freeze({
     network: env.HEDERA_NETWORK,
-    accountId: lender === "A" ? env.LENDER_A_ACCOUNT_ID : env.LENDER_B_ACCOUNT_ID,
-    privateKey: lender === "A" ? env.LENDER_A_PRIVATE_KEY : env.LENDER_B_PRIVATE_KEY,
+    accountId: env.LENDER_B_ACCOUNT_ID,
+    privateKey: env.LENDER_B_PRIVATE_KEY,
     consumerAccountId: env.CONSUMER_ACCOUNT_ID,
     mirrorNodeUrl: env.HEDERA_MIRROR_NODE_URL,
     auditTopicId: env.HCS_AUDIT_TOPIC_ID,
@@ -168,8 +220,9 @@ export function loadLenderEnv(lender: "A" | "B", source: EnvironmentSource = pro
 }
 
 export function loadResourceServerEnv(source: EnvironmentSource = process.env): ResourceServerEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(resourceServerSchema, source);
   return Object.freeze({
+    network: env.X402_NETWORK,
     facilitatorUrl: env.X402_FACILITATOR_URL,
     payToAccountId: env.X402_PAY_TO_ACCOUNT_ID,
     asset: env.X402_ASSET,
@@ -178,12 +231,12 @@ export function loadResourceServerEnv(source: EnvironmentSource = process.env): 
 }
 
 export function loadDirectoryEnv(source: EnvironmentSource = process.env): DirectoryEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(directorySchema, source);
   return Object.freeze({ port: env.DIRECTORY_PORT, databaseUrl: env.DATABASE_URL });
 }
 
 export function loadWebEnv(source: EnvironmentSource = process.env): WebEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(webSchema, source);
   return Object.freeze({
     port: env.WEB_PORT,
     orchestratorPort: env.ORCHESTRATOR_PORT,
@@ -192,7 +245,7 @@ export function loadWebEnv(source: EnvironmentSource = process.env): WebEnv {
 }
 
 export function loadOperatorEnv(source: EnvironmentSource = process.env): OperatorEnv {
-  const env = parseEnvironment(source);
+  const env = parseEnvironment(operatorSchema, source);
   return Object.freeze({
     network: env.HEDERA_NETWORK,
     accountId: env.HEDERA_OPERATOR_ID,

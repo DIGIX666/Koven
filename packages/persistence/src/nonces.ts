@@ -1,5 +1,7 @@
 import type { KovenDatabase } from "./db.js";
 import {
+  isUniqueConstraint,
+  PersistenceConflict,
   PersistenceConflictError,
   PersistenceNotFoundError,
   tinybarFromText,
@@ -128,12 +130,12 @@ function insertConsumedNonce(
     `).get(reservation.missionId, reservation.nonce);
     if (nonceExists !== undefined) {
       throw new PersistenceConflictError(
-        "nonce_already_used",
+        PersistenceConflict.NONCE_ALREADY_USED,
         `Nonce already used for mission ${reservation.missionId}`,
       );
     }
     throw new PersistenceConflictError(
-      "payment_commitment_already_used",
+      PersistenceConflict.PAYMENT_COMMITMENT_ALREADY_USED,
       "Payment commitment has already been used",
     );
   }
@@ -150,8 +152,20 @@ function reserveBudget(
   const current = tinybarFromText(currentText);
   const cap = tinybarFromText(capText);
   const next = current + amount;
-  if (amount <= 0n || next > cap) {
-    throw new PersistenceConflictError("cap_exceeded", `Spending cap exceeded for ${table}:${id}`);
+  if (amount <= 0n) {
+    throw new RangeError("Spending reservation amount must be positive");
+  }
+  if (amount > cap) {
+    throw new PersistenceConflictError(
+      PersistenceConflict.CAP_EXCEEDED,
+      `Payment exceeds spending cap for ${table}:${id}`,
+    );
+  }
+  if (next > cap) {
+    throw new PersistenceConflictError(
+      PersistenceConflict.CUMULATIVE_BUDGET_EXCEEDED,
+      `Cumulative spending exceeds cap for ${table}:${id}`,
+    );
   }
 
   const result = database.prepare(`
@@ -161,14 +175,8 @@ function reserveBudget(
   `).run(tinybarToText(next), id, currentText);
   if (result.changes !== 1) {
     throw new PersistenceConflictError(
-      "concurrent_update",
+      PersistenceConflict.CONCURRENT_UPDATE,
       `Spending changed concurrently for ${table}:${id}`,
     );
   }
-}
-
-function isUniqueConstraint(error: unknown): boolean {
-  return error instanceof Error && "code" in error && (
-    error.code === "SQLITE_CONSTRAINT_PRIMARYKEY" || error.code === "SQLITE_CONSTRAINT_UNIQUE"
-  );
 }
