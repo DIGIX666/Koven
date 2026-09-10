@@ -8,6 +8,11 @@
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/zk-policy --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/zk-policy"
+  },
+  "devDependencies": {
+    "circomlib": "2.0.5",
+    "circomlibjs": "0.1.7",
+    "snarkjs": "0.7.6"
   }
 }

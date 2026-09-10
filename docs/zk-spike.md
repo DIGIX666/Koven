@@ -135,10 +135,14 @@ restricted signer.
 | URL | `http://127.0.0.1:4401/scan` |
 | Mission ID | `mission-zk-vector-v1` |
 | Target SHA-256 | `0000000000000000000000000000000000000000000000000000000000000000` |
-| Recipient | Filled by the verified vector test |
-| Resource hash | Filled by the verified vector test |
-| Root | Filled by the verified vector test |
-| Commitment | Filled by the verified vector test |
+| Recipient | `20090861577258363490916040138716814650710442748919609827874183591023274269588` |
+| Resource SHA-256 | `a3051313512a544637a506fd964a16e8f1026c1af76eb9de9ed3ccfaaf8fe17d` |
+| Resource hash | `288031094563920303787641087997950259670691594399068952779151024896538021857` |
+| Root | `9290366279921276004309573535909951682127199613521183526684654559243443935582` |
+| Commitment | `1026350485950336119746959985882780800617574155133227942712398221216121187747` |
+
+The circuit is compiled with `--O2`. Circom reports 1,714 constraints, 1,718
+wires, 11 private inputs, no public inputs and exactly three public outputs.
 
 ## Artifact release results
 
