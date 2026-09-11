@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { buildReport, canonicalJson, hasValidReportHash } from "../src/report.js";
 import { SolhintScanEngine, type ScanEngine } from "../src/scan.js";
-import { createScanService, hashSource, parseBoundScanRequest, ScanServiceError } from "../src/server.js";
+import { hashSource, parseBoundScanRequest, ScanServiceError } from "../src/request.js";
+import { createScanService } from "../src/server.js";
 
 const fixtureUrl = (name: string) => new URL(`../../../tests/fixtures/contracts/${name}`, import.meta.url);
 const fixture = (name: string) => readFile(fixtureUrl(name), "utf8");
