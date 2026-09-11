@@ -133,6 +133,22 @@ describe("Policy V1 feasibility measurements", () => {
         warmup.proof,
       ),
     ).resolves.toBe(true);
+    const alteredPublicSignals = [...warmup.publicSignals];
+    alteredPublicSignals[2] = "2000001";
+    await expect(
+      groth16.verify(
+        signerVerificationKey,
+        alteredPublicSignals,
+        warmup.proof,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      groth16.verify(
+        lenderVerificationKey,
+        alteredPublicSignals,
+        warmup.proof,
+      ),
+    ).resolves.toBe(false);
 
     const witnessMilliseconds: number[] = [];
     const provingMilliseconds: number[] = [];

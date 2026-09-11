@@ -54,6 +54,12 @@ Full protocol flow, state machine, and ZK proof statement: [`docs/protocol.md`](
 - pnpm, available directly or through Corepack
 - Circom 2.2.3 for circuit compilation and artifact verification
 
+Install Circom from the
+[official v2.2.3 release](https://github.com/iden3/circom/releases/tag/v2.2.3)
+(a published binary where available, or the tagged source), then confirm that
+`circom --version` prints exactly `circom compiler 2.2.3`. Koven rejects other
+compiler versions.
+
 ### Setup
 
 ```bash
@@ -79,13 +85,14 @@ credentials for local development.
 | `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered |
 | `pnpm test:e2e` | Run the E2E test project (currently no tests) |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
-| `pnpm zk:test` | Run the policy-circuit and artifact-integrity tests |
+| `pnpm zk:test` | Run policy-circuit, artifact-integrity and feasibility tests after `pnpm zk:build` |
 
 Use the pinned pnpm version from `packageManager` (Corepack), then run:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
+pnpm zk:build
 pnpm typecheck
 pnpm lint
 pnpm test
@@ -145,7 +152,7 @@ This layout is planned and may evolve during implementation.
 | Hedera Agent Kit | Balance queries, transfers, HCS actions |
 | x402 v2 | HTTP-native payment negotiation |
 | Blocky402 | Required facilitator for Hedera payment settlement |
-| Circom / SnarkJS | Candidate stack for the policy circuit |
+| Circom / SnarkJS | Policy-circuit compilation, proving and verification |
 
 ## References
 

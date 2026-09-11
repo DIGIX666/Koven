@@ -30,6 +30,15 @@ const snarkjsPath = join(
 
 const CIRCUIT_ID = "koven-policy-v1";
 const CIRCOM_VERSION = "2.2.3";
+const COMPILER_FLAGS = ["--r1cs", "--wasm", "--sym", "--O2"] as const;
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+const ARTIFACT_FILES = {
+  r1cs: "policy.r1cs",
+  wasm: "policy.wasm",
+  zkey: "policy_final.zkey",
+  verificationKey: "verification_key.json",
+  phase2Transcript: "phase2-transcript.txt",
+} as const;
 const PTAU = {
   file: "ppot_0080_12.ptau",
   points: 4096,
@@ -92,6 +101,10 @@ function stripAnsi(value: string): string {
   return value.replaceAll(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, "gu"), "");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function run(command: string, args: string[], input?: string): string {
   const result = spawnSync(command, args, {
     cwd: repositoryRoot,
@@ -109,18 +122,33 @@ function run(command: string, args: string[], input?: string): string {
   return stripAnsi(output).trim();
 }
 
-function assertToolVersions(): void {
-  const circomVersion = run("circom", ["--version"]);
-  if (!circomVersion.includes(`compiler ${CIRCOM_VERSION}`)) {
-    fail(`Expected Circom ${CIRCOM_VERSION}, received: ${circomVersion}`);
+export function assertCircomVersion(actualVersion: string): void {
+  if (actualVersion.trim() !== `circom compiler ${CIRCOM_VERSION}`) {
+    fail(`Expected Circom ${CIRCOM_VERSION}, received: ${actualVersion.trim()}`);
   }
+}
+
+function installedPackageVersion(packageName: string): string | undefined {
+  const dependencyPackageJson = JSON.parse(
+    readFileSync(join(packageRoot, "node_modules", packageName, "package.json"), "utf8"),
+  ) as { version?: string };
+  return dependencyPackageJson.version;
+}
+
+function assertToolVersions(): void {
+  assertCircomVersion(run("circom", ["--version"]));
 
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
     devDependencies?: Record<string, string>;
   };
   const snarkjsVersion = packageJson.devDependencies?.snarkjs;
   const circomlibVersion = packageJson.devDependencies?.circomlib;
-  if (snarkjsVersion !== "0.7.6" || circomlibVersion !== "2.0.5") {
+  if (
+    snarkjsVersion !== "0.7.6" ||
+    circomlibVersion !== "2.0.5" ||
+    installedPackageVersion("snarkjs") !== "0.7.6" ||
+    installedPackageVersion("circomlib") !== "2.0.5"
+  ) {
     fail("The ZK build requires pinned snarkjs 0.7.6 and circomlib 2.0.5");
   }
 }
@@ -128,10 +156,7 @@ function assertToolVersions(): void {
 function compileCircuit(outputPath: string): void {
   run("circom", [
     circuitPath,
-    "--r1cs",
-    "--wasm",
-    "--sym",
-    "--O2",
+    ...COMPILER_FLAGS,
     "--output",
     outputPath,
     "-l",
@@ -143,6 +168,15 @@ export async function downloadVerified(
   record: ArtifactRecord,
   destination: string,
 ): Promise<void> {
+  const url = new URL(record.url);
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    fail(`Artifact URL must use HTTPS without credentials: ${record.url}`);
+  }
+
   if (existsSync(destination)) {
     const actual = sha256(destination);
     if (actual !== record.sha256) {
@@ -153,31 +187,53 @@ export async function downloadVerified(
     return;
   }
 
-  const url = new URL(record.url);
-  if (url.protocol !== "https:") {
-    fail(`Artifact URL must use HTTPS: ${record.url}`);
-  }
-
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok) {
-    fail(`Unable to download ${record.url}: HTTP ${response.status}`);
-  }
-
   const temporaryPath = `${destination}.part-${process.pid}`;
-  mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(temporaryPath, Buffer.from(await response.arrayBuffer()), {
-    flag: "wx",
-  });
-  const actual = sha256(temporaryPath);
-  if (actual !== record.sha256) {
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      fail(`Unable to download ${record.url}: HTTP ${response.status}`);
+    }
+    if (response.url !== "" && new URL(response.url).protocol !== "https:") {
+      fail(`Artifact redirect must use HTTPS: ${response.url}`);
+    }
+
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(temporaryPath, Buffer.from(await response.arrayBuffer()), {
+      flag: "wx",
+    });
+    const actual = sha256(temporaryPath);
+    if (actual !== record.sha256) {
+      fail(`Hash mismatch for ${record.file}: expected ${record.sha256}, received ${actual}`);
+    }
+    renameSync(temporaryPath, destination);
+  } catch (error) {
     rmSync(temporaryPath, { force: true });
-    fail(`Hash mismatch for ${record.file}: expected ${record.sha256}, received ${actual}`);
+    throw error;
   }
-  renameSync(temporaryPath, destination);
 }
 
-function parseManifest(path: string): ArtifactManifest {
-  const manifest = JSON.parse(readFileSync(path, "utf8")) as ArtifactManifest;
+export function parseManifest(path: string): ArtifactManifest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    fail(`Unable to parse artifact manifest at ${path}: ${reason}`);
+  }
+  if (
+    !isRecord(parsed) ||
+    !isRecord(parsed.compiler) ||
+    !isRecord(parsed.libraries) ||
+    !isRecord(parsed.phase1) ||
+    !isRecord(parsed.sourceHashes) ||
+    !isRecord(parsed.artifacts)
+  ) {
+    fail(`Invalid artifact manifest structure at ${path}`);
+  }
+  const manifest = parsed as unknown as ArtifactManifest;
   if (manifest.schemaVersion !== 1 || manifest.circuitId !== CIRCUIT_ID) {
     fail(`Unsupported artifact manifest at ${path}`);
   }
@@ -190,6 +246,13 @@ function parseManifest(path: string): ArtifactManifest {
     fail("Artifact manifest tool versions do not match the pinned build");
   }
   if (
+    !Array.isArray(manifest.compiler.flags) ||
+    manifest.compiler.flags.length !== COMPILER_FLAGS.length ||
+    !manifest.compiler.flags.every((flag, index) => flag === COMPILER_FLAGS[index])
+  ) {
+    fail("Artifact manifest compiler flags do not match the pinned build");
+  }
+  if (
     manifest.phase1.file !== PTAU.file ||
     manifest.phase1.sha256 !== PTAU.sha256 ||
     manifest.phase1.url !== PTAU.url ||
@@ -198,23 +261,66 @@ function parseManifest(path: string): ArtifactManifest {
     fail("Artifact manifest does not pin the reviewed Powers of Tau transcript");
   }
   if (
+    !/^[a-f0-9]{40}$/u.test(manifest.sourceRevision) ||
+    !/^[a-f0-9]{64}$/u.test(manifest.sourceHashes.policyCircom) ||
+    !/^[a-f0-9]{64}$/u.test(manifest.sourceHashes.merkleCircom) ||
     manifest.sourceHashes.policyCircom !== sha256(circuitPath) ||
     manifest.sourceHashes.merkleCircom !== sha256(merklePath)
   ) {
     fail("Circuit sources do not match the reviewed artifact manifest");
   }
-  if (!/^[a-f0-9]{64}$/u.test(manifest.vkeyHash)) {
-    fail("Artifact manifest contains an invalid verification-key hash");
+  const artifactKeys = Object.keys(manifest.artifacts).sort();
+  const expectedArtifactKeys = Object.keys(ARTIFACT_FILES).sort();
+  if (artifactKeys.join("\n") !== expectedArtifactKeys.join("\n")) {
+    fail("Artifact manifest does not contain the exact required artifact roles");
   }
-  for (const record of Object.values(manifest.artifacts)) {
+  for (const [role, expectedFile] of Object.entries(ARTIFACT_FILES)) {
+    const record = manifest.artifacts[role as keyof ArtifactManifest["artifacts"]];
+    if (!isRecord(record)) {
+      fail(`Artifact manifest contains an invalid record for ${role}`);
+    }
+    if (record.file !== expectedFile) {
+      fail(`Artifact manifest contains an unexpected filename for ${role}`);
+    }
     if (!/^[a-f0-9]{64}$/u.test(record.sha256)) {
       fail(`Artifact manifest contains an invalid hash for ${record.file}`);
     }
-    if (basename(record.file) !== record.file) {
-      fail(`Artifact filename must not contain a path: ${record.file}`);
+    let artifactUrl: URL;
+    try {
+      artifactUrl = new URL(record.url);
+    } catch {
+      fail(`Artifact manifest contains an invalid URL for ${record.file}`);
+    }
+    if (
+      artifactUrl.protocol !== "https:" ||
+      artifactUrl.username !== "" ||
+      artifactUrl.password !== "" ||
+      decodeURIComponent(basename(artifactUrl.pathname)) !== record.file
+    ) {
+      fail(`Artifact manifest contains an unsafe URL for ${record.file}`);
     }
   }
+  if (
+    !/^[a-f0-9]{64}$/u.test(manifest.vkeyHash) ||
+    manifest.vkeyHash !== manifest.artifacts.verificationKey.sha256
+  ) {
+    fail("Artifact manifest contains an invalid verification-key hash");
+  }
   return manifest;
+}
+
+function assertCircuitSourcesCommitted(): void {
+  const status = run("git", [
+    "status",
+    "--short",
+    "--untracked-files=all",
+    "--",
+    "packages/zk-policy/circuits/policy.circom",
+    "packages/zk-policy/circuits/merkle.circom",
+  ]);
+  if (status !== "") {
+    fail("Commit the exact circuit sources before creating release artifacts");
+  }
 }
 
 async function verifyOfficialBuild(manifestPath: string): Promise<void> {
@@ -284,13 +390,33 @@ function artifactRecord(
 
 async function setupRelease(options: CliOptions): Promise<void> {
   assertToolVersions();
+  assertCircuitSourcesCommitted();
   if (options.outputPath === undefined || options.releaseBaseUrl === undefined) {
     fail("setup-release requires --output and --release-base-url");
   }
   const releaseUrl = new URL(options.releaseBaseUrl);
-  if (releaseUrl.protocol !== "https:") {
-    fail("The release base URL must use HTTPS");
+  if (
+    releaseUrl.protocol !== "https:" ||
+    releaseUrl.username !== "" ||
+    releaseUrl.password !== "" ||
+    releaseUrl.search !== "" ||
+    releaseUrl.hash !== ""
+  ) {
+    fail("The release base URL must be an HTTPS URL without credentials, query or hash");
   }
+  const contributionName = options.contributor ?? "Koven Policy V1 maintainer";
+  const containsControlCharacter = [...contributionName].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
+  });
+  if (
+    contributionName.trim() === "" ||
+    Buffer.byteLength(contributionName, "utf8") > 64 ||
+    containsControlCharacter
+  ) {
+    fail("Contributor name must be 1-64 UTF-8 bytes without control characters");
+  }
+  const sourceRevision = run("git", ["rev-parse", "HEAD"]);
 
   const outputPath = resolve(options.outputPath);
   if (existsSync(outputPath)) {
@@ -325,7 +451,6 @@ async function setupRelease(options: CliOptions): Promise<void> {
       ptauCache,
       initialZkey,
     ]);
-    const contributionName = options.contributor ?? "Koven Policy V1 maintainer";
     const contributionEntropy = randomBytes(64).toString("hex");
     const contribution = run(snarkjsPath, [
       "zkey",
@@ -350,7 +475,10 @@ async function setupRelease(options: CliOptions): Promise<void> {
       verificationKeyPath,
     ]);
 
-    const sourceRevision = run("git", ["rev-parse", "HEAD"]);
+    assertCircuitSourcesCommitted();
+    if (run("git", ["rev-parse", "HEAD"]) !== sourceRevision) {
+      fail("Repository HEAD changed while release artifacts were being created");
+    }
     const transcript = [
       `Circuit: ${CIRCUIT_ID}`,
       `Source revision: ${sourceRevision}`,
@@ -383,7 +511,7 @@ async function setupRelease(options: CliOptions): Promise<void> {
       compiler: {
         name: "circom",
         version: CIRCOM_VERSION,
-        flags: ["--r1cs", "--wasm", "--sym", "--O2"],
+        flags: [...COMPILER_FLAGS],
       },
       libraries: { circomlib: "2.0.5", snarkjs: "0.7.6" },
       phase1: PTAU,
@@ -412,17 +540,28 @@ async function setupRelease(options: CliOptions): Promise<void> {
   }
 }
 
-function parseCli(argv: string[]): CliOptions {
+export function parseCli(argv: string[]): CliOptions {
   const command = argv[0];
   if (command !== "build" && command !== "setup-release") {
     fail("Usage: build.ts <build|setup-release> [options]");
   }
+  const allowedOptions =
+    command === "build"
+      ? new Set(["--manifest"])
+      : new Set(["--output", "--release-base-url", "--contributor"]);
   const values = new Map<string, string>();
-  for (let index = 1; index < argv.length; index += 2) {
+  const firstOptionIndex = argv[1] === "--" ? 2 : 1;
+  for (let index = firstOptionIndex; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
     if (key === undefined || value === undefined || !key.startsWith("--")) {
       fail(`Invalid command option near ${key ?? "end of input"}`);
+    }
+    if (!allowedOptions.has(key)) {
+      fail(`Unsupported option ${key} for ${command}`);
+    }
+    if (values.has(key)) {
+      fail(`Duplicate command option ${key}`);
     }
     values.set(key, value);
   }

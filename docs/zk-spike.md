@@ -2,10 +2,12 @@
 
 ## Status
 
-This document freezes the Policy V1 encoding before the circuit is implemented,
-then records the artifact and performance results. The circuit
-provides a portable payment-policy attestation. It does not make x402 payment
-metadata confidential: only the Merkle authentication path is private.
+This document records the frozen Policy V1 encoding, official artifacts and
+performance results. The circuit provides a portable payment-policy attestation.
+Within the proof, the amount, recipient, nonce, resource hash and Merkle path are
+private witness values, while the cap, root and commitment are public. The x402
+flow still reveals its payment metadata to its participants, so the proof does
+not provide transaction confidentiality or network privacy.
 
 ## Circuit identity and field
 

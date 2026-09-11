@@ -218,6 +218,18 @@ describe("Policy V1 circuit", () => {
     expect(() => runWitness(resourceHash)).toThrow();
   });
 
+  it("accepts the inclusive upper bounds of every ranged value", () => {
+    const input = vectorInput();
+    input.amount = ((1n << 64n) - 1n).toString();
+    input.cap = input.amount;
+    input.nonce = ((1n << 248n) - 1n).toString();
+    input.resourceHash = input.nonce;
+
+    const outputs = runWitness(input);
+    expect(outputs.root).toBe(VECTOR.root);
+    expect(outputs.cap).toBe(input.cap);
+  });
+
   it("rejects a non-boolean Merkle path index", () => {
     const input = vectorInput();
     input.pathIndices[0] = 2;
@@ -231,5 +243,34 @@ describe("Policy V1 circuit", () => {
 
     expect(outputs.root).not.toBe(VECTOR.root);
     expect(outputs.commitment).toBe(VECTOR.commitment);
+  });
+
+  it("computes the host-side root for a right-hand real leaf", async () => {
+    const poseidon = await buildPoseidon();
+    const asDecimal = (inputs: readonly bigint[]): string =>
+      poseidon.F.toString(poseidon(inputs));
+    const rightRecipient = asDecimal([0n, 0n, 10396538n]);
+    const firstParent = asDecimal([
+      BigInt(VECTOR.recipient),
+      BigInt(rightRecipient),
+    ]);
+    const secondParent = asDecimal([
+      BigInt(firstParent),
+      BigInt(VECTOR.pathElements[1]),
+    ]);
+    const expectedRoot = asDecimal([
+      BigInt(secondParent),
+      BigInt(VECTOR.pathElements[2]),
+    ]);
+    const input = vectorInput();
+    input.recipient = rightRecipient;
+    input.pathElements = [
+      VECTOR.recipient,
+      VECTOR.pathElements[1],
+      VECTOR.pathElements[2],
+    ];
+    input.pathIndices = [1, 0, 0];
+
+    expect(runWitness(input).root).toBe(expectedRoot);
   });
 });
