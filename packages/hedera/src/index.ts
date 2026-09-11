@@ -1,4 +1,5 @@
 export { createClient, type HederaEnvironment } from "./client.js";
+export type { HederaAdapter, HederaTransferResult } from "./adapter.js";
 export { getBalanceTinybar } from "./balance.js";
 export { transferHbar, type TransferHbarRequest } from "./transfer.js";
 export { createTopic, submitTopicMessage } from "./topic.js";

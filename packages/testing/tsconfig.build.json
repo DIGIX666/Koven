@@ -18,7 +18,16 @@
       "path": "../../tsconfig.tools.json"
     },
     {
+      "path": "../audit/tsconfig.build.json"
+    },
+    {
       "path": "../domain/tsconfig.build.json"
+    },
+    {
+      "path": "../hedera/tsconfig.build.json"
+    },
+    {
+      "path": "../x402/tsconfig.build.json"
     }
   ]
 }

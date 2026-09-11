@@ -1,26 +1,23 @@
 {
-  "name": "@koven/orchestrator",
+  "name": "@koven/testing",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
   "dependencies": {
     "@koven/audit": "workspace:*",
     "@koven/domain": "workspace:*",
-    "@koven/persistence": "workspace:*",
-    "@koven/schemas": "workspace:*",
+    "@koven/hedera": "workspace:*",
     "@koven/x402": "workspace:*",
-    "@x402/hedera": "2.24.0",
-    "express": "5.1.0",
-    "zod": "3.25.76"
+    "@x402/hedera": "2.24.0"
   },
   "devDependencies": {
-    "@koven/testing": "workspace:*",
-    "@types/express": "5.0.3"
+    "@koven/schemas": "workspace:*"
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/orchestrator --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/testing"
   }
 }
