@@ -8,5 +8,14 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. --project @koven/resource-server --passWithNoTests"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6"
+  },
+  "dependencies": {
+    "@koven/domain": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "express": "5.2.1",
+    "solhint": "6.2.4"
   }
 }
