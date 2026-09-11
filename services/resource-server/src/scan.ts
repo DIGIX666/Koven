@@ -78,7 +78,11 @@ function compareFindings(left: Finding, right: Finding): number {
     || left.message.localeCompare(right.message);
 }
 
-/** Runs an intentionally fixed Solhint security profile over in-memory source. */
+/**
+ * Runs an intentionally fixed Solhint security profile over in-memory source.
+ * Findings are returned untruncated; the scan service enforces the report
+ * contract limits explicitly instead of silently dropping content.
+ */
 export class SolhintScanEngine implements ScanEngine {
   readonly id = "solhint-6.2.4";
 
@@ -93,10 +97,9 @@ export class SolhintScanEngine implements ScanEngine {
           severity: severityFor(ruleId),
           file: ref,
           line: Math.max(1, entry.line ?? 1),
-          message: (entry.message ?? "Solhint reported an unspecified issue").slice(0, 4096),
+          message: entry.message ?? "Solhint reported an unspecified issue",
         };
       })
-      .sort(compareFindings)
-      .slice(0, 1000);
+      .sort(compareFindings);
   }
 }

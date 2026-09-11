@@ -4,10 +4,11 @@ import { decodePaymentResponseHeader, encodePaymentResponseHeader } from "@x402/
 import type { SettleResponse } from "@x402/core/types";
 import { ExpressAdapter } from "@x402/express";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
-import { ErrorCode, type ScanReport } from "@koven/domain";
+import { ErrorCode, type Finding, type ScanReport } from "@koven/domain";
 import { AccountId, MAX_HTTP_BODY_BYTES } from "@koven/schemas";
 
 import {
+  MAX_TIMEOUT_SECONDS,
   type PaymentAuthorizationPolicy,
   PaymentAuthorizationError,
   validatePaidPaymentAttempt,
@@ -21,7 +22,12 @@ import { SolhintScanEngine, type ScanEngine } from "./scan.js";
 import {
   SettlementConfirmationError,
   type SettlementConfirmer,
+  SettlementReconciliationWorker,
 } from "./settlement.js";
+
+/** Report contract limits frozen by `ScanReportSchema` and `FindingSchema` in `@koven/schemas`. */
+export const MAX_REPORT_FINDINGS = 1000;
+export const MAX_FINDING_MESSAGE_CHARS = 4096;
 
 export interface ScanService {
   scan(input: unknown): Promise<ScanReport>;
@@ -31,6 +37,25 @@ export interface ScanServiceOptions {
   readonly providerId: string;
   readonly engine?: ScanEngine;
   readonly now?: () => Date;
+}
+
+/** Fails explicitly when an engine result cannot be represented by the report contract. */
+function assertReportLimits(findings: Finding[]): void {
+  if (findings.length > MAX_REPORT_FINDINGS) {
+    throw new ScanServiceError(
+      ErrorCode.INTERNAL_ERROR,
+      500,
+      `Scan produced ${findings.length} findings; the report contract allows at most ${MAX_REPORT_FINDINGS}`,
+    );
+  }
+  const oversized = findings.find(finding => finding.message.length > MAX_FINDING_MESSAGE_CHARS);
+  if (oversized) {
+    throw new ScanServiceError(
+      ErrorCode.INTERNAL_ERROR,
+      500,
+      `Finding ${oversized.ruleId} at line ${oversized.line} exceeds ${MAX_FINDING_MESSAGE_CHARS} characters`,
+    );
+  }
 }
 
 /** Creates the validated scanning core; HTTP and payment adapters wrap this boundary. */
@@ -44,6 +69,7 @@ export function createScanService(options: ScanServiceOptions): ScanService {
       const startedAt = now().toISOString();
       const findings = await engine.scan(request.source, request.targetRef);
       const completedAt = now().toISOString();
+      assertReportLimits(findings);
       return buildReport(request, options.providerId, findings, { startedAt, completedAt });
     },
   };
@@ -62,11 +88,14 @@ export interface PaidScanServerOptions extends Omit<PaymentAuthorizationPolicy, 
   readonly callbackFetch?: typeof fetch;
   readonly callbackRandom?: () => number;
   readonly dispatchCallbacks?: boolean;
+  readonly reconcileSettlements?: boolean;
+  readonly settlementReconcileIntervalMs?: number;
 }
 
 export interface PaidScanServer {
   readonly app: Express;
   readonly callbacks: CallbackDispatcher;
+  readonly settlements: SettlementReconciliationWorker;
   readonly x402: x402HTTPResourceServer;
 }
 
@@ -74,15 +103,22 @@ function sendJsonError(response: Response, status: number, code: string, detail:
   response.status(status).json({ code, detail });
 }
 
+/**
+ * Relays x402 payment instructions. The frozen contract answers `402` with the
+ * `PAYMENT-REQUIRED` header and an empty body, so the SDK's default JSON or
+ * HTML paywall body is never sent.
+ */
 function sendPaymentInstructions(response: Response, instructions: {
   status: number;
   headers: Record<string, string>;
   body?: unknown;
   isHtml?: boolean;
 }): void {
-  for (const [name, value] of Object.entries(instructions.headers)) response.setHeader(name, value);
-  if (instructions.isHtml) response.status(instructions.status).send(instructions.body);
-  else response.status(instructions.status).json(instructions.body ?? {});
+  for (const [name, value] of Object.entries(instructions.headers)) {
+    if (name.toLowerCase() === "content-type") continue;
+    response.setHeader(name, value);
+  }
+  response.status(instructions.status).end();
 }
 
 function callbackFor(payment: StoredPayment, settledAt: string) {
@@ -95,7 +131,7 @@ function syntheticSettlement(payment: StoredPayment): SettleResponse {
     success: true,
     payer: payment.request.paymentAuthorization.borrowerAccountId,
     transaction: payment.transactionId,
-    network: "hedera:testnet",
+    network: payment.network,
   };
 }
 
@@ -123,11 +159,12 @@ function safePaymentResponseHeaders(
 function assertSettlementResult(
   result: SettleResponse,
   attempt: ValidatedPaymentAttempt,
+  policy: PaymentAuthorizationPolicy,
 ): void {
   if (
     !result.success
     || result.transaction !== attempt.authorization.transactionId
-    || result.network !== "hedera:testnet"
+    || result.network !== policy.network
     || result.payer !== attempt.authorization.borrowerAccountId
     || (result.amount !== undefined && result.amount !== attempt.authorization.amountTinybar)
   ) {
@@ -137,6 +174,16 @@ function assertSettlementResult(
       "Facilitator settlement does not match the authorized payment",
     );
   }
+}
+
+function isUnconfirmed(error: unknown): error is SettlementConfirmationError {
+  return error instanceof SettlementConfirmationError && error.code === ErrorCode.SETTLEMENT_UNCONFIRMED;
+}
+
+function sendStoredReport(response: Response, payment: StoredPayment, report: ScanReport): void {
+  for (const [name, value] of Object.entries(payment.responseHeaders)) response.setHeader(name, value);
+  response.setHeader("cache-control", "private");
+  response.json(report);
 }
 
 /**
@@ -155,7 +202,7 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
         network: options.network,
         payTo: options.providerAccountId,
         price: { amount: options.amountTinybar, asset: options.asset },
-        maxTimeoutSeconds: 180,
+        maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
       },
       resource: options.scanUrl,
       description: "Solidity security scan",
@@ -202,16 +249,35 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
     callbacks.wake();
   };
 
+  /**
+   * Completes an attempted settlement once consensus is independently confirmed
+   * and atomically enqueues its callback. An unconfirmed settlement is recorded
+   * (rotating the row and, once the transaction can no longer execute, marking a
+   * facilitator-unconfirmed payment as failed) and the error is rethrown.
+   */
   const reconcile = async (payment: StoredPayment): Promise<StoredPayment | null> => {
-    if (payment.status === "completed") return payment;
+    if (payment.status === "completed" || payment.status === "settlement_failed") return payment;
     if (!payment.settlementAttempted || !payment.report) return null;
 
-    const confirmed = await options.settlementConfirmer.confirm({
-      transactionId: payment.transactionId,
-      payerAccountId: payment.request.paymentAuthorization.borrowerAccountId,
-      providerAccountId: options.providerAccountId,
-      amountTinybar: options.amountTinybar,
-    });
+    let confirmed: Awaited<ReturnType<SettlementConfirmer["confirm"]>>;
+    try {
+      confirmed = await options.settlementConfirmer.confirm({
+        transactionId: payment.transactionId,
+        payerAccountId: payment.request.paymentAuthorization.borrowerAccountId,
+        providerAccountId: options.providerAccountId,
+        amountTinybar: options.amountTinybar,
+      });
+    } catch (error) {
+      if (error instanceof SettlementConfirmationError) {
+        options.store.recordUnconfirmedSettlement(
+          payment.transactionId,
+          error.message,
+          now().getTime(),
+          { unconfirmed: isUnconfirmed(error) },
+        );
+      }
+      throw error;
+    }
     const settlement = payment.settlement ?? syntheticSettlement(payment);
     const headers = responseHeadersFor(payment, settlement);
     if (!payment.settlement) options.store.saveSettlement(payment.transactionId, settlement, headers, now().getTime());
@@ -223,6 +289,46 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
     );
     dispatchCallback();
     return options.store.getPayment(payment.transactionId);
+  };
+  const settlements = new SettlementReconciliationWorker({
+    store: options.store,
+    reconcile,
+    ...(options.settlementReconcileIntervalMs !== undefined
+      ? { intervalMs: options.settlementReconcileIntervalMs }
+      : {}),
+  });
+
+  /**
+   * Resolves a retry of a payment this provider already attempted to settle.
+   * A facilitator-confirmed settlement returns the stored report even while
+   * Mirror consensus is still pending; the callback is gated on that consensus
+   * by the reconciliation worker. A settlement the facilitator did not confirm
+   * must be observed on the ledger before the report is released.
+   */
+  const respondWithExisting = async (response: Response, payment: StoredPayment): Promise<void> => {
+    let current: StoredPayment | null;
+    let unconfirmed: SettlementConfirmationError | null = null;
+    try {
+      current = await reconcile(payment);
+    } catch (error) {
+      if (!isUnconfirmed(error)) throw error;
+      unconfirmed = error;
+      settlements.wake();
+      current = options.store.getPayment(payment.transactionId);
+    }
+    if (current?.status === "settlement_failed") {
+      throw new PaymentAuthorizationError(
+        ErrorCode.PAYMENT_AUTHORIZATION_INVALID,
+        401,
+        "Payment did not settle before its transaction expired",
+      );
+    }
+    if (!current?.report || !current.settlement) {
+      if (unconfirmed) throw unconfirmed;
+      sendJsonError(response, 503, ErrorCode.SETTLEMENT_UNCONFIRMED, "Payment is already being processed");
+      return;
+    }
+    sendStoredReport(response, current, current.report);
   };
 
   const app = express();
@@ -249,17 +355,31 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
         return;
       }
 
-      const attempt = validatePaidPaymentAttempt(request.body, paymentHeader, authorizationPolicy, now());
+      const attempt = validatePaidPaymentAttempt(
+        request.body,
+        paymentHeader,
+        authorizationPolicy,
+        now(),
+        { allowExpired: true },
+      );
+      if (attempt.authorizationExpired) {
+        const existing = options.store.getPayment(attempt.authorization.transactionId);
+        if (
+          !existing
+          || existing.fingerprint !== attempt.fingerprint
+          || !existing.settlementAttempted
+          || existing.status === "settlement_failed"
+        ) {
+          throw new PaymentAuthorizationError(
+            ErrorCode.PAYMENT_AUTHORIZATION_INVALID,
+            401,
+            "Payment authorization has expired",
+          );
+        }
+      }
       const claim = options.store.claimPayment(attempt, now().getTime());
       if (!claim.owned) {
-        const recovered = await reconcile(claim.payment);
-        if (!recovered?.report) {
-          sendJsonError(response, 503, ErrorCode.SETTLEMENT_UNCONFIRMED, "Payment is already being processed");
-          return;
-        }
-        for (const [name, value] of Object.entries(recovered.responseHeaders)) response.setHeader(name, value);
-        response.setHeader("cache-control", "private");
-        response.json(recovered.report);
+        await respondWithExisting(response, claim.payment);
         return;
       }
 
@@ -280,6 +400,11 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
       if (processing.type !== "payment-verified" || processing.beforeHandlerSettlement) {
         throw new Error("Unexpected x402 payment flow");
       }
+      options.store.renewVerifiedPaymentLease(
+        attempt.authorization.transactionId,
+        claim.token!,
+        now().getTime(),
+      );
 
       let report = claim.payment.report;
       if (!report) {
@@ -294,7 +419,8 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
       options.store.markSettlementAttempted(attempt.authorization.transactionId, claim.token!, now().getTime());
 
       const responseBody = Buffer.from(JSON.stringify(report), "utf8");
-      let settled: Awaited<ReturnType<typeof httpServer.processSettlement>>;
+      let settled: Awaited<ReturnType<typeof httpServer.processSettlement>> | null = null;
+      let failureReason = "Facilitator response is invalid";
       try {
         settled = await httpServer.processSettlement(
           processing.paymentPayload,
@@ -302,36 +428,41 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
           processing.declaredExtensions,
           { request: context, responseBody, responseHeaders: { "content-type": "application/json" } },
         );
-      } catch {
+        if (!settled.success) failureReason = settled.errorReason;
+      } catch (error) {
+        if (error instanceof Error) failureReason = error.message;
+      }
+      if (!settled?.success) {
+        // The SDK reports facilitator timeouts and refusals alike as a failed
+        // settlement, so the outcome is uncertain: the transaction may still
+        // reach consensus. Keep the claim; reconciliation completes it from the
+        // ledger or fails it once the transaction can no longer execute.
+        options.store.recordUnconfirmedSettlement(
+          attempt.authorization.transactionId,
+          `Facilitator did not confirm settlement: ${failureReason}`,
+          now().getTime(),
+        );
+        settlements.wake();
         throw new SettlementConfirmationError(
           ErrorCode.SETTLEMENT_UNCONFIRMED,
           503,
           "Payment settlement outcome is uncertain",
         );
       }
-      if (!settled.success) {
-        sendPaymentInstructions(response, settled.response);
-        return;
-      }
       const { headers, requirements: _requirements, ...settlement } = settled;
-      assertSettlementResult(settlement, attempt);
+      assertSettlementResult(settlement, attempt, authorizationPolicy);
       const responseHeaders = safePaymentResponseHeaders(headers, settlement);
       options.store.saveSettlement(attempt.authorization.transactionId, settlement, responseHeaders, now().getTime());
-      for (const [name, value] of Object.entries(responseHeaders)) response.setHeader(name, value);
 
-      const confirmed = await options.settlementConfirmer.confirm({
-        transactionId: attempt.authorization.transactionId,
-        payerAccountId: attempt.authorization.borrowerAccountId,
-        providerAccountId: options.providerAccountId,
-        amountTinybar: options.amountTinybar,
-      });
-      const stored = options.store.getPayment(attempt.authorization.transactionId)!;
-      options.store.completeAndEnqueue(
-        attempt.authorization.transactionId,
-        callbackFor(stored, confirmed.settledAt),
-        now().getTime(),
-      );
-      dispatchCallback();
+      // The report is deliverable once the facilitator confirmed settlement;
+      // only the completion callback waits for independent Mirror consensus.
+      try {
+        await reconcile(options.store.getPayment(attempt.authorization.transactionId)!);
+      } catch (error) {
+        if (!isUnconfirmed(error)) throw error;
+        settlements.wake();
+      }
+      for (const [name, value] of Object.entries(responseHeaders)) response.setHeader(name, value);
       response.setHeader("cache-control", "private");
       response.json(report);
     } catch (error) {
@@ -351,9 +482,14 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
       sendJsonError(response, 413, ErrorCode.SOURCE_TOO_LARGE, "Request body exceeds the configured limit");
       return;
     }
+    if (typeof error === "object" && error !== null && "type" in error && error.type === "entity.parse.failed") {
+      sendJsonError(response, 400, ErrorCode.REQUEST_INVALID, "Request body is not valid JSON");
+      return;
+    }
     sendJsonError(response, 500, ErrorCode.INTERNAL_ERROR, "Resource server failed to process the request");
   });
 
   if (options.dispatchCallbacks !== false) callbacks.start();
-  return { app, callbacks, x402: httpServer };
+  if (options.reconcileSettlements !== false) settlements.start();
+  return { app, callbacks, settlements, x402: httpServer };
 }

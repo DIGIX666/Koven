@@ -10,12 +10,20 @@ import type { PaidScanRequest, ValidatedPaymentAttempt } from "./authorization.j
 import { canonicalJson, sha256Hex } from "./report.js";
 
 const PAYMENT_LEASE_MS = 30_000;
+const VERIFIED_PAYMENT_LEASE_MS = 300_000;
 const CALLBACK_LEASE_MS = 30_000;
+/**
+ * Mirror Node lag tolerated after a transaction's valid window before a
+ * settlement the facilitator never confirmed is recorded as failed.
+ */
+export const SETTLEMENT_FAILURE_GRACE_MS = 600_000;
 
 export class ProviderStoreError extends Error {
   constructor(
-    readonly code: typeof ErrorCode.IDEMPOTENCY_CONFLICT | typeof ErrorCode.INTERNAL_ERROR,
-    readonly status: 409 | 500,
+    readonly code: typeof ErrorCode.IDEMPOTENCY_CONFLICT
+      | typeof ErrorCode.INTERNAL_ERROR
+      | typeof ErrorCode.SETTLEMENT_UNCONFIRMED,
+    readonly status: 409 | 500 | 503,
     detail: string,
   ) {
     super(detail);
@@ -29,13 +37,16 @@ export interface StoredPayment {
   readonly fingerprint: string;
   readonly request: PaidScanRequest;
   readonly paymentPayload: PaymentPayload;
-  readonly status: "claimed" | "report_ready" | "settled" | "completed";
+  readonly status: "claimed" | "report_ready" | "settled" | "completed" | "settlement_failed";
   readonly settlementAttempted: boolean;
   readonly report: ScanReport | null;
   readonly settlement: SettleResponse | null;
   readonly responseHeaders: Readonly<Record<string, string>>;
   readonly leaseToken: string | null;
   readonly leaseUntil: number | null;
+  /** Unix milliseconds after which the Hedera transaction can no longer reach consensus. */
+  readonly validUntil: number;
+  readonly lastError: string | null;
 }
 
 export interface PaymentClaim {
@@ -64,6 +75,8 @@ interface PaymentRow {
   response_headers_json: string | null;
   lease_token: string | null;
   lease_until: number | null;
+  valid_until: number;
+  last_error: string | null;
 }
 
 interface CallbackRow {
@@ -104,8 +117,14 @@ function parsePaymentRow(row: PaymentRow): StoredPayment {
     responseHeaders: parseObjectJson(row.response_headers_json),
     leaseToken: row.lease_token,
     leaseUntil: row.lease_until,
+    validUntil: row.valid_until,
+    lastError: row.last_error,
   };
 }
+
+const PAYMENT_COLUMNS = `network, transaction_id, fingerprint, request_json, payment_payload_json,
+        status, settlement_attempted, report_json, settlement_json,
+        response_headers_json, lease_token, lease_until, valid_until, last_error`;
 
 export class ProviderStore {
   readonly database: Database.Database;
@@ -122,13 +141,16 @@ export class ProviderStore {
         fingerprint TEXT NOT NULL,
         request_json TEXT NOT NULL,
         payment_payload_json TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('claimed', 'report_ready', 'settled', 'completed')),
+        status TEXT NOT NULL
+          CHECK (status IN ('claimed', 'report_ready', 'settled', 'completed', 'settlement_failed')),
         settlement_attempted INTEGER NOT NULL DEFAULT 0 CHECK (settlement_attempted IN (0, 1)),
         report_json TEXT,
         settlement_json TEXT,
         response_headers_json TEXT,
         lease_token TEXT,
         lease_until INTEGER,
+        valid_until INTEGER NOT NULL,
+        last_error TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (network, transaction_id)
@@ -164,9 +186,7 @@ export class ProviderStore {
 
   private payment(transactionId: string): StoredPayment | null {
     const row = this.database.prepare(`
-      SELECT network, transaction_id, fingerprint, request_json, payment_payload_json,
-        status, settlement_attempted, report_json, settlement_json,
-        response_headers_json, lease_token, lease_until
+      SELECT ${PAYMENT_COLUMNS}
       FROM provider_paid_scans
       WHERE network = 'hedera:testnet' AND transaction_id = ?
     `).get(transactionId) as PaymentRow | undefined;
@@ -177,6 +197,21 @@ export class ProviderStore {
     return this.payment(transactionId);
   }
 
+  pendingSettlements(limit = 10): StoredPayment[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new ProviderStoreError(ErrorCode.INTERNAL_ERROR, 500, "Settlement batch limit must be 1-100");
+    }
+    const rows = this.database.prepare(`
+      SELECT ${PAYMENT_COLUMNS}
+      FROM provider_paid_scans
+      WHERE network = 'hedera:testnet' AND settlement_attempted = 1
+        AND status NOT IN ('completed', 'settlement_failed') AND report_json IS NOT NULL
+      ORDER BY updated_at, transaction_id
+      LIMIT ?
+    `).all(limit) as PaymentRow[];
+    return rows.map(parsePaymentRow);
+  }
+
   claimPayment(attempt: ValidatedPaymentAttempt, now = Date.now()): PaymentClaim {
     const token = randomUUID();
     const transactionId = attempt.authorization.transactionId;
@@ -184,8 +219,8 @@ export class ProviderStore {
       this.database.prepare(`
         INSERT OR IGNORE INTO provider_paid_scans (
           network, transaction_id, fingerprint, request_json, payment_payload_json,
-          status, lease_token, lease_until, created_at, updated_at
-        ) VALUES ('hedera:testnet', ?, ?, ?, ?, 'claimed', ?, ?, ?, ?)
+          status, lease_token, lease_until, valid_until, created_at, updated_at
+        ) VALUES ('hedera:testnet', ?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?)
       `).run(
         transactionId,
         attempt.fingerprint,
@@ -193,6 +228,7 @@ export class ProviderStore {
         canonicalJson(attempt.paymentPayload),
         token,
         now + PAYMENT_LEASE_MS,
+        attempt.transactionValidUntil,
         now,
         now,
       );
@@ -241,10 +277,26 @@ export class ProviderStore {
     `).run(reportJson, now, transactionId, token);
   }
 
+  renewVerifiedPaymentLease(transactionId: string, token: string, now = Date.now()): void {
+    const result = this.database.prepare(`
+      UPDATE provider_paid_scans
+      SET lease_until = ?, updated_at = ?
+      WHERE network = 'hedera:testnet' AND transaction_id = ? AND lease_token = ?
+        AND settlement_attempted = 0 AND status IN ('claimed', 'report_ready')
+    `).run(now + VERIFIED_PAYMENT_LEASE_MS, now, transactionId, token);
+    if (result.changes !== 1) {
+      throw new ProviderStoreError(
+        ErrorCode.SETTLEMENT_UNCONFIRMED,
+        503,
+        "Payment processing was taken over by another request",
+      );
+    }
+  }
+
   markSettlementAttempted(transactionId: string, token: string, now = Date.now()): void {
     const result = this.database.prepare(`
       UPDATE provider_paid_scans
-      SET settlement_attempted = 1, lease_until = NULL, updated_at = ?
+      SET settlement_attempted = 1, lease_token = NULL, lease_until = NULL, updated_at = ?
       WHERE network = 'hedera:testnet' AND transaction_id = ? AND lease_token = ?
         AND report_json IS NOT NULL AND settlement_attempted = 0
     `).run(now, transactionId, token);
@@ -280,6 +332,41 @@ export class ProviderStore {
       SET settlement_json = ?, response_headers_json = ?, status = 'settled', updated_at = ?
       WHERE network = 'hedera:testnet' AND transaction_id = ?
     `).run(settlementJson, canonicalJson(responseHeaders), now, transactionId);
+  }
+
+  /**
+   * Records a reconciliation attempt that did not complete the payment. Bumping
+   * `updated_at` rotates the row to the back of the pending queue so a stuck
+   * payment cannot starve newer ones. When the ledger showed nothing
+   * (`unconfirmed`), a payment the facilitator never confirmed becomes
+   * terminally failed once its transaction can no longer reach consensus and
+   * the Mirror grace period has elapsed.
+   */
+  recordUnconfirmedSettlement(
+    transactionId: string,
+    detail: string,
+    now = Date.now(),
+    options: { readonly unconfirmed?: boolean } = {},
+  ): StoredPayment {
+    const outcome = this.database.transaction((): StoredPayment => {
+      const existing = this.payment(transactionId);
+      if (!existing || !existing.settlementAttempted || !existing.report) {
+        throw new ProviderStoreError(ErrorCode.INTERNAL_ERROR, 500, "Settlement has no prepared scan");
+      }
+      if (existing.status === "completed" || existing.status === "settlement_failed") return existing;
+      const failed = options.unconfirmed !== false
+        && existing.settlement === null
+        && now > existing.validUntil + SETTLEMENT_FAILURE_GRACE_MS;
+      this.database.prepare(`
+        UPDATE provider_paid_scans
+        SET status = CASE WHEN ? THEN 'settlement_failed' ELSE status END,
+          last_error = ?, updated_at = ?
+        WHERE network = 'hedera:testnet' AND transaction_id = ?
+          AND status NOT IN ('completed', 'settlement_failed')
+      `).run(failed ? 1 : 0, detail.slice(0, 1024), now, transactionId);
+      return this.payment(transactionId)!;
+    });
+    return outcome.immediate();
   }
 
   completeAndEnqueue(

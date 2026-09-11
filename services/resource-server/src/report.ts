@@ -20,6 +20,7 @@ function serializeCanonical(value: unknown): string {
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
     const entries = Object.keys(record)
+      .filter(key => record[key] !== undefined)
       .sort()
       .map(key => `${JSON.stringify(key)}:${serializeCanonical(record[key])}`);
     return `{${entries.join(",")}}`;
@@ -47,7 +48,7 @@ export function buildReport(
   const unsigned = {
     schemaVersion: 1 as const,
     missionId: request.missionId,
-    targetSha256: request.targetSha256,
+    targetSha256: sha256Hex(request.source),
     providerId,
     findings,
     startedAt: window.startedAt,

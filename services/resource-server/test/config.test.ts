@@ -42,8 +42,9 @@ describe("loadPaidScanEnvironment", () => {
       ...valid,
       PROVIDER_A_PRICE_TINYBAR: "0",
       RESOURCE_SERVER_PUBLIC_URL: "http://remote.example",
+      X402_FACILITATOR_URL: "http://remote.example",
       CONSUMER_PUBLIC_KEY: "not-a-key",
       CALLBACK_SECRET: "c2hvcnQ",
-    })).toThrowError(/CALLBACK_SECRET.*CONSUMER_PUBLIC_KEY.*PROVIDER_A_PRICE_TINYBAR.*RESOURCE_SERVER_PUBLIC_URL/);
+    })).toThrowError(/CALLBACK_SECRET.*CONSUMER_PUBLIC_KEY.*PROVIDER_A_PRICE_TINYBAR.*RESOURCE_SERVER_PUBLIC_URL.*X402_FACILITATOR_URL/);
   });
 });

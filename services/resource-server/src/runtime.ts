@@ -49,6 +49,7 @@ export async function createPaidScanRuntime(
       },
       close(): void {
         server.callbacks.stop();
+        server.settlements.stop();
         store.close();
       },
     };

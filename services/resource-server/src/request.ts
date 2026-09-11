@@ -6,12 +6,13 @@ import { MAX_SOURCE_BYTES, ScanRequestSchema } from "@koven/schemas";
 export type ScanRequestErrorCode =
   | typeof ErrorCode.REQUEST_INVALID
   | typeof ErrorCode.SOURCE_HASH_MISMATCH
-  | typeof ErrorCode.SOURCE_TOO_LARGE;
+  | typeof ErrorCode.SOURCE_TOO_LARGE
+  | typeof ErrorCode.INTERNAL_ERROR;
 
 export class ScanServiceError extends Error {
   constructor(
     readonly code: ScanRequestErrorCode,
-    readonly status: 400 | 413,
+    readonly status: 400 | 413 | 500,
     detail: string,
   ) {
     super(detail);

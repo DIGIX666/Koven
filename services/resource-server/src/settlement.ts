@@ -1,5 +1,7 @@
 import { ErrorCode } from "@koven/domain";
 
+import type { ProviderStore, StoredPayment } from "./outbox.js";
+
 export interface SettlementExpectation {
   readonly transactionId: string;
   readonly payerAccountId: string;
@@ -23,6 +25,78 @@ export class SettlementConfirmationError extends Error {
   ) {
     super(detail);
     this.name = "SettlementConfirmationError";
+  }
+}
+
+export interface SettlementReconciliationWorkerOptions {
+  readonly store: ProviderStore;
+  readonly reconcile: (payment: StoredPayment) => Promise<unknown>;
+  readonly intervalMs?: number;
+}
+
+/** Periodically resumes persisted settlements that have not yet produced callbacks. */
+export class SettlementReconciliationWorker {
+  private readonly intervalMs: number;
+  private running = false;
+  private timer: NodeJS.Timeout | null = null;
+  private drain: Promise<number> | null = null;
+
+  constructor(private readonly options: SettlementReconciliationWorkerOptions) {
+    this.intervalMs = options.intervalMs ?? 5_000;
+    if (!Number.isInteger(this.intervalMs) || this.intervalMs < 1 || this.intervalMs > 60_000) {
+      throw new Error("Settlement reconciliation interval must be between 1 and 60000 ms");
+    }
+  }
+
+  async dispatchDue(limit = 10): Promise<number> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Settlement reconciliation batch limit must be 1-100");
+    }
+    if (this.drain) return this.drain;
+    this.drain = this.drainDue(limit);
+    try {
+      return await this.drain;
+    } finally {
+      this.drain = null;
+    }
+  }
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.schedule(0);
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  wake(): void {
+    if (this.running) this.schedule(0);
+  }
+
+  private async drainDue(limit: number): Promise<number> {
+    const payments = this.options.store.pendingSettlements(limit);
+    for (const payment of payments) {
+      try {
+        await this.options.reconcile(payment);
+      } catch {
+        // The durable row remains pending and will be retried on the next cycle.
+      }
+    }
+    return payments.length;
+  }
+
+  private schedule(delay: number): void {
+    if (!this.running) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.dispatchDue().catch(() => 0).finally(() => this.schedule(this.intervalMs));
+    }, delay);
+    this.timer.unref();
   }
 }
 

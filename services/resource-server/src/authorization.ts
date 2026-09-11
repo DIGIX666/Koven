@@ -7,6 +7,7 @@ import {
   getNetForAccount,
   getPositiveReceivers,
   inspectHederaTransaction,
+  Transaction,
 } from "@x402/hedera";
 import { ErrorCode } from "@koven/domain";
 import { PublicKey } from "@koven/hedera";
@@ -20,6 +21,8 @@ import { canonicalJson, sha256Hex } from "./report.js";
 import { parseBoundPaidScanRequestBase } from "./request.js";
 
 const AUTHORIZATION_DOMAIN = "koven:scan-payment-authorization:v1";
+/** Frozen by the provider's route configuration and echoed in every accepted requirement. */
+export const MAX_TIMEOUT_SECONDS = 180;
 
 type WireAuthorization = ReturnType<typeof ScanPaymentAuthorizationSchema.parse>;
 export type PaidScanRequest = ReturnType<typeof PaidScanRequestSchema.parse>;
@@ -55,6 +58,13 @@ export interface ValidatedPaymentAttempt {
   readonly paymentPayload: PaymentPayload;
   readonly transactionBase64: string;
   readonly fingerprint: string;
+  readonly authorizationExpired: boolean;
+  /** Unix milliseconds of the transaction's valid start plus its valid duration. */
+  readonly transactionValidUntil: number;
+}
+
+export interface PaymentAuthorizationValidationOptions {
+  readonly allowExpired?: boolean;
 }
 
 export function authorizationSigningPayload(authorization: WireAuthorization): string {
@@ -122,17 +132,30 @@ function assertPolicyBinding(
     || accepted.asset !== policy.asset
     || accepted.amount !== policy.amountTinybar
     || accepted.payTo !== policy.providerAccountId
-    || accepted.maxTimeoutSeconds !== 180
-    || accepted.extra.feePayer !== policy.feePayerAccountId
+    || accepted.maxTimeoutSeconds !== MAX_TIMEOUT_SECONDS
+    || accepted.extra?.feePayer !== policy.feePayerAccountId
     || (payload.resource !== undefined && payload.resource.url !== policy.scanUrl)
   ) mismatch("x402 payment requirements do not match this provider");
+}
+
+/** Computes when the signed transaction stops being executable, from its own bytes and ID. */
+function transactionValidUntil(bytes: Buffer, transactionId: string): number {
+  const validStart = /@(\d+)\.(\d{9})$/.exec(transactionId);
+  const validDurationSeconds = Transaction.fromBytes(bytes).transactionValidDuration;
+  if (!validStart || !Number.isSafeInteger(validDurationSeconds) || validDurationSeconds <= 0) {
+    throw new Error("Transaction validity window is unavailable");
+  }
+  const startMs = (BigInt(validStart[1]!) * 1000n) + (BigInt(validStart[2]!) / 1_000_000n);
+  const untilMs = startMs + (BigInt(validDurationSeconds) * 1000n);
+  if (untilMs > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Transaction validity window is invalid");
+  return Number(untilMs);
 }
 
 function assertTransactionBinding(
   transactionBase64: string,
   authorization: WireAuthorization,
   policy: PaymentAuthorizationPolicy,
-): void {
+): number {
   const bytes = Buffer.from(transactionBase64, "base64");
   if (bytes.toString("base64") !== transactionBase64) invalid("Hedera transaction encoding is not canonical base64");
   if (createHash("sha256").update(bytes).digest("hex") !== authorization.transactionSha256) {
@@ -140,8 +163,10 @@ function assertTransactionBinding(
   }
 
   let transaction: ReturnType<typeof inspectHederaTransaction>;
+  let validUntil: number;
   try {
     transaction = inspectHederaTransaction(transactionBase64);
+    validUntil = transactionValidUntil(bytes, transaction.transactionId);
   } catch {
     invalid("Hedera transaction cannot be decoded");
   }
@@ -158,6 +183,7 @@ function assertTransactionBinding(
     || getNetForAccount(transaction.hbarTransfers, authorization.providerAccountId) !== BigInt(authorization.amountTinybar)
     || getPositiveReceivers(transaction.hbarTransfers).some(accountId => accountId !== authorization.providerAccountId)
   ) mismatch("Hedera transaction does not match the authorized transfer");
+  return validUntil;
 }
 
 /** Validates all provider-owned checks before x402 calls the facilitator. */
@@ -166,6 +192,7 @@ export function validatePaidPaymentAttempt(
   paymentSignatureHeader: string,
   policy: PaymentAuthorizationPolicy,
   now: Date = new Date(),
+  options: PaymentAuthorizationValidationOptions = {},
 ): ValidatedPaymentAttempt {
   parseBoundPaidScanRequestBase(body);
 
@@ -177,7 +204,8 @@ export function validatePaidPaymentAttempt(
   const authorization = parsedAuthorization.data;
 
   verifyAuthorizationSignature(authorization, policy.signerPublicKeys);
-  if (Date.parse(authorization.expiresAt) <= now.getTime()) invalid("Payment authorization has expired");
+  const authorizationExpired = Date.parse(authorization.expiresAt) <= now.getTime();
+  if (authorizationExpired && !options.allowExpired) invalid("Payment authorization has expired");
 
   const parsedRequest = PaidScanRequestSchema.safeParse(body);
   if (!parsedRequest.success) mismatch("Payment authorization does not match the submitted source");
@@ -191,7 +219,7 @@ export function validatePaidPaymentAttempt(
 
   assertPolicyBinding(parsedRequest.data, authorization, paymentPayload, policy);
   const transactionBase64 = transactionFromPayload(paymentPayload);
-  assertTransactionBinding(transactionBase64, authorization, policy);
+  const validUntil = assertTransactionBinding(transactionBase64, authorization, policy);
 
   return {
     request: parsedRequest.data,
@@ -199,5 +227,7 @@ export function validatePaidPaymentAttempt(
     paymentPayload,
     transactionBase64,
     fingerprint: sha256Hex(canonicalJson({ request: parsedRequest.data, paymentPayload })),
+    authorizationExpired,
+    transactionValidUntil: validUntil,
   };
 }

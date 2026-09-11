@@ -23,9 +23,9 @@ function seedCallback(store: ProviderStore, now: number): void {
   store.database.prepare(`
     INSERT INTO provider_paid_scans (
       network, transaction_id, fingerprint, request_json, payment_payload_json,
-      status, settlement_attempted, created_at, updated_at
-    ) VALUES ('hedera:testnet', ?, ?, '{}', '{}', 'completed', 1, ?, ?)
-  `).run(transactionId, "b".repeat(64), now, now);
+      status, settlement_attempted, valid_until, created_at, updated_at
+    ) VALUES ('hedera:testnet', ?, ?, '{}', '{}', 'completed', 1, ?, ?, ?)
+  `).run(transactionId, "b".repeat(64), now + 120_000, now, now);
   store.database.prepare(`
     INSERT INTO provider_callback_jobs (
       idempotency_key, network, transaction_id, body, body_sha256, status,
@@ -104,11 +104,85 @@ describe("CallbackDispatcher", () => {
       now: () => 1_789_118_401_000,
     });
 
+    dispatcher.start();
+    try {
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect((reopened.database.prepare(`
+        SELECT status FROM provider_callback_jobs WHERE idempotency_key = ?
+      `).get(idempotencyKey) as { status: string }).status).toBe("delivered");
+    } finally {
+      dispatcher.stop();
+    }
+  });
+
+  it("honors Retry-After when a callback endpoint rate-limits delivery", async () => {
+    const store = new ProviderStore(":memory:");
+    stores.push(store);
+    const now = 1_789_118_400_000;
+    seedCallback(store, now);
+    const dispatcher = new CallbackDispatcher({
+      store,
+      callbackUrl: "https://orchestrator.example/callbacks/mission-complete",
+      callbackSecret: secret,
+      fetch: vi.fn(async () => new Response("rate limited", {
+        status: 429,
+        headers: { "retry-after": "5" },
+      })),
+      now: () => now,
+      random: () => 0,
+    });
+
     expect(await dispatcher.dispatchDue()).toBe(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((reopened.database.prepare(`
-      SELECT status FROM provider_callback_jobs WHERE idempotency_key = ?
-    `).get(idempotencyKey) as { status: string }).status).toBe("delivered");
+    expect(store.database.prepare(`
+      SELECT status, attempts, next_attempt_at, last_error
+      FROM provider_callback_jobs WHERE idempotency_key = ?
+    `).get(idempotencyKey)).toEqual({
+      status: "pending",
+      attempts: 1,
+      next_attempt_at: now + 5_000,
+      last_error: "Callback returned HTTP 429",
+    });
+    expect(await dispatcher.dispatchDue()).toBe(0);
+  });
+
+  it("fails repeated server errors after twenty attempts and allows explicit replay", async () => {
+    const store = new ProviderStore(":memory:");
+    stores.push(store);
+    let now = 1_789_118_400_000;
+    seedCallback(store, now);
+    const fetchMock = vi.fn(async () => new Response("unavailable", { status: 503 }));
+    const dispatcher = new CallbackDispatcher({
+      store,
+      callbackUrl: "https://orchestrator.example/callbacks/mission-complete",
+      callbackSecret: secret,
+      fetch: fetchMock,
+      now: () => now,
+      random: () => 0,
+    });
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      expect(await dispatcher.dispatchDue()).toBe(1);
+      now += 1;
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(20);
+    expect(store.database.prepare(`
+      SELECT status, attempts, last_error
+      FROM provider_callback_jobs WHERE idempotency_key = ?
+    `).get(idempotencyKey)).toEqual({
+      status: "failed",
+      attempts: 20,
+      last_error: "Callback returned HTTP 503",
+    });
+    expect(store.replayCallback(idempotencyKey, now + 1)).toBe(true);
+    expect(store.database.prepare(`
+      SELECT status, attempts, next_attempt_at, last_error
+      FROM provider_callback_jobs WHERE idempotency_key = ?
+    `).get(idempotencyKey)).toEqual({
+      status: "pending",
+      attempts: 0,
+      next_attempt_at: now + 1,
+      last_error: null,
+    });
   });
 
   it("retains non-retryable client failures for explicit operator replay", async () => {

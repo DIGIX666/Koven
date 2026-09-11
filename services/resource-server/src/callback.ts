@@ -209,7 +209,7 @@ export class CallbackDispatcher {
   private retry(job: CallbackJob, detail: string, now: number, retryAfter: number | null = null): void {
     const exponentialCap = Math.min(60_000, 1000 * (2 ** Math.min(job.attempts, 16)));
     const jitter = Math.floor(this.random() * exponentialCap);
-    const delay = Math.max(jitter, retryAfter ?? 0);
+    const delay = Math.max(1, jitter, retryAfter ?? 0);
     this.options.store.retryCallback(job, now + delay, detail, this.now());
   }
 }

@@ -93,13 +93,15 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
     return parsed;
   }, invalidKeys);
   const publicUrl = validate("RESOURCE_SERVER_PUBLIC_URL", publicUrlValue, publicBaseUrl, invalidKeys);
+  const facilitatorUrl = validate("X402_FACILITATOR_URL", base.facilitatorUrl, trustedOrigin, invalidKeys);
   const callbackUrl = validate("CALLBACK_URL", callbackUrlValue, trustedServiceUrl, invalidKeys);
   validate("CALLBACK_SECRET", callbackSecret, value => decodeCallbackSecret(value), invalidKeys);
   const consumerAccountId = validate("CONSUMER_ACCOUNT_ID", consumerAccountValue, value => AccountId.parse(value), invalidKeys);
   validate("CONSUMER_PUBLIC_KEY", consumerPublicKey, value => PublicKey.fromStringECDSA(value), invalidKeys);
   validate("HEDERA_MIRROR_NODE_URL", mirrorNodeUrl, trustedOrigin, invalidKeys);
 
-  if (invalidKeys.length > 0 || !providerId || !amountTinybar || !publicUrl || !callbackUrl || !consumerAccountId) {
+  if (invalidKeys.length > 0 || !providerId || !amountTinybar || !publicUrl
+    || !facilitatorUrl || !callbackUrl || !consumerAccountId) {
     throw new EnvironmentValidationError([...new Set(invalidKeys)].sort());
   }
 
@@ -110,7 +112,7 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
     amountTinybar,
     network: base.network,
     asset: base.asset,
-    facilitatorUrl: base.facilitatorUrl,
+    facilitatorUrl,
     mirrorNodeUrl,
     signerPublicKeys: Object.freeze({ [consumerAccountId]: consumerPublicKey }),
     callbackUrl,
