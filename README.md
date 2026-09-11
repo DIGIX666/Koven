@@ -82,10 +82,10 @@ credentials for local development.
 | `pnpm build` | Compile all workspace sources and tool configurations using TypeScript project references |
 | `pnpm lint` | Run ESLint across sources, tests and tooling; warnings fail the command |
 | `pnpm typecheck` | Check tooling and every workspace, including contract type conformance |
-| `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered |
+| `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered. Runs right after install, no artifacts needed |
 | `pnpm test:e2e` | Run the E2E test project (currently no tests) |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
-| `pnpm zk:test` | Run policy-circuit, artifact-integrity and feasibility tests after `pnpm zk:build` |
+| `pnpm zk:test` | Run the Policy V1 feasibility benchmark on the verified official artifacts; requires `pnpm zk:build` first |
 
 Use the pinned pnpm version from `packageManager` (Corepack), then run:
 
@@ -96,6 +96,7 @@ pnpm zk:build
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm zk:test
 ```
 
 Each workspace exposes `build`, `lint`, `typecheck` and `test`, for example

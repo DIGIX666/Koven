@@ -13,7 +13,7 @@
     "test:e2e": "pnpm --filter @koven/e2e test",
     "zk:build": "pnpm --filter @koven/zk-policy build",
     "zk:setup-release": "pnpm --filter @koven/zk-policy setup-release",
-    "zk:test": "pnpm --filter @koven/zk-policy test",
+    "zk:test": "pnpm --filter @koven/zk-policy test:artifacts",
     "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
     "test:scripts": "tsx --test scripts/test/*.test.ts"
   },
