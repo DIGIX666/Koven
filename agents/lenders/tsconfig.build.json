@@ -16,6 +16,21 @@
   "references": [
     {
       "path": "../../tsconfig.tools.json"
+    },
+    {
+      "path": "../../packages/credit-protocol/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/domain/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/hedera/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/persistence/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/schemas/tsconfig.build.json"
     }
   ]
 }
