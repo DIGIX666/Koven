@@ -6,10 +6,16 @@
   "dependencies": {
     "@koven/audit": "workspace:*",
     "@koven/domain": "workspace:*",
-    "@koven/persistence": "workspace:*"
+    "@koven/persistence": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "@koven/x402": "workspace:*",
+    "@x402/hedera": "2.24.0",
+    "express": "5.1.0",
+    "zod": "3.25.76"
   },
   "devDependencies": {
-    "@koven/testing": "workspace:*"
+    "@koven/testing": "workspace:*",
+    "@types/express": "5.0.3"
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",

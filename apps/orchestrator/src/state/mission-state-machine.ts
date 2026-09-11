@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type { AuditEvent, AuditEventType, AuditSink } from "@koven/audit";
 import { assertTransition, type MissionState } from "@koven/domain";
@@ -11,6 +11,8 @@ import {
   type LocalEvent,
   type PersistedMission,
 } from "@koven/persistence";
+
+import { canonicalJsonValue, hashCanonicalJson } from "../canonical.js";
 
 export interface TransitionAudit<T = unknown> {
   type: AuditEventType;
@@ -28,22 +30,6 @@ interface TransitionPayload<T> {
   to: MissionState;
   detail: T;
 }
-
-const canonicalize = (value: unknown): unknown => {
-  if (typeof value === "bigint") return value.toString(10);
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonicalize(nested)]),
-    );
-  }
-  return value;
-};
-
-const hashPayload = (payload: unknown): string => createHash("sha256")
-  .update(JSON.stringify(canonicalize(payload)))
-  .digest("hex");
 
 /** Persists a state transition and its local audit record as one SQLite transaction. */
 export class MissionStateMachine {
@@ -64,26 +50,28 @@ export class MissionStateMachine {
     from: MissionState,
     to: MissionState,
     audit: TransitionAudit<T>,
+    persistAdditionalState?: () => void,
   ): Promise<PersistedMission> {
     assertTransition(from, to);
     const occurredAt = this.now();
-    const payload: TransitionPayload<T> = { from, to, detail: audit.payload };
+    const payload = canonicalJsonValue({ from, to, detail: audit.payload }) as TransitionPayload<unknown>;
     const event: AuditEvent = {
       id: this.eventId(missionId, from, to),
       missionId,
       type: audit.type,
-      payloadHash: hashPayload(payload),
+      payloadHash: hashCanonicalJson(payload),
       occurredAt,
     };
     if (audit.transactionId !== undefined) event.transactionId = audit.transactionId;
 
-    const localEvent: LocalEvent<TransitionPayload<T>> = { ...event, payload };
+    const localEvent: LocalEvent<TransitionPayload<unknown>> = { ...event, payload };
     const persist = this.database.transaction(() => {
       if (getMission(this.database, missionId) === undefined) {
         throw new PersistenceNotFoundError("mission", missionId);
       }
       transitionMission(this.database, missionId, from, to, occurredAt);
       createEvent(this.database, localEvent);
+      persistAdditionalState?.();
       const mission = getMission(this.database, missionId);
       if (mission === undefined) throw new PersistenceNotFoundError("mission", missionId);
       return mission;

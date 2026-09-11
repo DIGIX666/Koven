@@ -25,6 +25,12 @@
     },
     {
       "path": "../../packages/persistence/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/schemas/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/x402/tsconfig.build.json"
     }
   ]
 }
