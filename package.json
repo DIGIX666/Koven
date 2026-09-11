@@ -12,7 +12,8 @@
     "test": "vitest run && pnpm test:scripts",
     "test:e2e": "pnpm --filter @koven/e2e test",
     "zk:build": "pnpm --filter @koven/zk-policy build",
-    "zk:test": "pnpm --filter @koven/zk-policy test",
+    "zk:setup-release": "pnpm --filter @koven/zk-policy setup-release",
+    "zk:test": "pnpm --filter @koven/zk-policy test:artifacts",
     "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
     "test:scripts": "tsx --test scripts/test/*.test.ts"
   },
@@ -38,7 +39,9 @@
       "better-sqlite3"
     ],
     "overrides": {
-      "@hiero-ledger/sdk": "2.85.0"
+      "@hiero-ledger/sdk": "2.85.0",
+      "@ethersproject/providers@5.8.0>ws": "8.21.0",
+      "jsonpath@1.3.0>underscore": "1.13.8"
     }
   },
   "dependencies": {
