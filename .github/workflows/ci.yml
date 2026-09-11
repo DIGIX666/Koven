@@ -21,8 +21,19 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+      - name: Install Circom 2.2.3
+        run: |
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/circom" \
+            https://github.com/iden3/circom/releases/download/v2.2.3/circom-linux-amd64
+          echo "85342c7ff332d948df7c0c50ecf201e6129349aef550ce873f3c811b79fe53a3  $RUNNER_TEMP/circom" \
+            | sha256sum --check
+          sudo install --mode 0755 "$RUNNER_TEMP/circom" /usr/local/bin/circom
+          circom --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm zk:build
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm zk:test

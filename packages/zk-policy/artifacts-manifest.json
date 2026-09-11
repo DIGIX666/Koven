@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "circuitId": "koven-policy-v1",
+  "sourceRevision": "32a8b7b369480656f06ed7de9c5c3a7c9d3f9237",
+  "sourceHashes": {
+    "policyCircom": "4913339035315529faa70a86e177263e2695acfd69a63def0604e92e51e9341d",
+    "merkleCircom": "319b972a14fedd5998282019536af02b15b1a4ecae39cb2627ba73411223c840"
+  },
+  "compiler": {
+    "name": "circom",
+    "version": "2.2.3",
+    "flags": [
+      "--r1cs",
+      "--wasm",
+      "--sym",
+      "--O2"
+    ]
+  },
+  "libraries": {
+    "circomlib": "2.0.5",
+    "snarkjs": "0.7.6"
+  },
+  "phase1": {
+    "file": "ppot_0080_12.ptau",
+    "points": 4096,
+    "sha256": "35e163120e724a60853d0dd76ec54037f7c7b00584392255f71a4341d5a05c50",
+    "url": "https://pse-trusted-setup-ppot.s3.eu-central-1.amazonaws.com/pot28_0080/ppot_0080_12.ptau"
+  },
+  "artifacts": {
+    "r1cs": {
+      "file": "policy.r1cs",
+      "sha256": "8318f80b9ca1c1d8a4db94cfbe1ec74d5d4e82b5b22cd0fcaadb8c4d37149fbd",
+      "url": "https://github.com/DIGIX666/Koven/releases/download/zk-policy-v1/policy.r1cs"
+    },
+    "wasm": {
+      "file": "policy.wasm",
+      "sha256": "5fe158c5bc17acd301413a275fc20c00c1169b8c79c7b5c29797ebac36d4fa30",
+      "url": "https://github.com/DIGIX666/Koven/releases/download/zk-policy-v1/policy.wasm"
+    },
+    "zkey": {
+      "file": "policy_final.zkey",
+      "sha256": "372bbf57cf025e143f91186502d3a18384abc5dc83a76e6250f9338079aff1d7",
+      "url": "https://github.com/DIGIX666/Koven/releases/download/zk-policy-v1/policy_final.zkey"
+    },
+    "verificationKey": {
+      "file": "verification_key.json",
+      "sha256": "2d23ff5d6058a4de330abee1fdc1b68905da223f9ad8bdb681d598e38b6a257d",
+      "url": "https://github.com/DIGIX666/Koven/releases/download/zk-policy-v1/verification_key.json"
+    },
+    "phase2Transcript": {
+      "file": "phase2-transcript.txt",
+      "sha256": "b98a55f381e93503a6522c606b17afdeb73b27abaa0e523582d34539f50a2b74",
+      "url": "https://github.com/DIGIX666/Koven/releases/download/zk-policy-v1/phase2-transcript.txt"
+    }
+  },
+  "vkeyHash": "2d23ff5d6058a4de330abee1fdc1b68905da223f9ad8bdb681d598e38b6a257d"
+}
