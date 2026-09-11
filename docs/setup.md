@@ -94,6 +94,35 @@ creates the topic. ZK artifacts are produced/pinned in A1; the directory setting
 alone does not mean a proof bundle or verification key exists. Mission roots and
 caps come from trusted policy provisioning, not invented setup values.
 
+## Paid scan provider configuration
+
+The scan provider (`services/resource-server`, A2.1/A2.2) reads these additional
+variables; the template lists them under "Paid scan provider":
+
+| Variable | Meaning |
+| --- | --- |
+| `PROVIDER_ID` | Provider identity written into every `ScanReport.providerId` |
+| `PROVIDER_A_PRICE_TINYBAR` | Exact HBAR price of one scan, decimal tinybars, nonzero |
+| `RESOURCE_SERVER_PUBLIC_URL` | Public base URL without trailing slash; `/scan` is appended and must equal the signer's `scanUrl` |
+| `RESOURCE_SERVER_DATABASE_URL` | SQLite file for paid-scan claims, reports, settlements and the callback outbox; one per provider |
+| `CALLBACK_URL` | Deployment-configured orchestrator `POST /callbacks/mission-complete`; never caller-supplied |
+| `CALLBACK_SECRET` | Unpadded base64url encoding of exactly 32 random bytes; distinct per provider and shared only with the callback verifiers |
+| `CONSUMER_PUBLIC_KEY` | Restricted signer's ECDSA public key, pinned by `CONSUMER_ACCOUNT_ID`, used to verify scan payment authorizations |
+
+The provider also uses `X402_PAY_TO_ACCOUNT_ID`, `X402_NETWORK`, `X402_ASSET`,
+`X402_FACILITATOR_URL`, `HEDERA_MIRROR_NODE_URL` and `RESOURCE_SERVER_PORT`. It
+never receives a private key. Generate a callback secret with
+`node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
+
+Run it from the repository root with root `.env` loaded (Node 20.6+ for `--env-file`):
+
+```sh
+pnpm --filter @koven/resource-server dev
+```
+
+An unpaid `POST /scan` with a source-bound `ScanRequest` then answers `402` with
+a `PAYMENT-REQUIRED` header and an empty body.
+
 ## Checklist for a new local setup
 
 - [ ] Six distinct numeric testnet IDs are mapped to the roles above.

@@ -5,8 +5,25 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
+    "dev": "tsx --env-file=../../.env src/main.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/resource-server --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/resource-server"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/express": "5.0.6"
+  },
+  "dependencies": {
+    "@koven/config": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/hedera": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "@x402/core": "2.24.0",
+    "@x402/express": "2.24.0",
+    "@x402/hedera": "2.24.0",
+    "better-sqlite3": "12.11.1",
+    "express": "5.2.1",
+    "solhint": "6.2.4"
   }
 }
