@@ -120,10 +120,11 @@ real files.
 
 ## A0.2 implementation decisions
 
-- Pin `@hiero-ledger/sdk` to `2.85.0`, the exact dependency reported by
-  `pnpm view @x402/hedera@2.24.0 dependencies --json`; enforce it through the root
-  pnpm override. `@koven/hedera` is the sole direct SDK importer. API usage was
-  checked against the installed version's source and TypeScript declarations.
+- Pin `@hiero-ledger/sdk` to `2.86.2` and enforce it through the root pnpm
+  override. F08 raised the original `2.85.0` pin because Hedera Agent Kit `4.1.0`
+  requires `2.86.2`; the x402 and Agent Kit paths now share that SDK instance.
+  `@koven/hedera` remains Koven's sole direct SDK importer. API usage and the
+  existing x402 flow are checked against the installed version.
 - Use Vitest `2.1.9` for the Hedera package with a shared root configuration base.
   Keep the existing contract tests unchanged; the live testnet test is an explicit
   command, excluded from ordinary `pnpm test`.
@@ -137,11 +138,10 @@ real files.
 - Submit only single-chunk HCS messages (1–1024 UTF-8 bytes). The mirror adapter
   returns one bounded ascending page with a sequence cursor, retains base64
   payloads, and rejects unsafe JSON integers rather than silently rounding them.
-- The published SDK `2.85.0` pins `protobufjs` to `8.2.0`, while its
-  `@hiero-ledger/proto@2.31.0` dependency declares peer `protobufjs@8.0.1`.
-  pnpm reports this upstream mismatch. Keep the SDK's declared dependency graph
-  rather than overriding protobuf independently. A0.4 validated the x402
-  settlement path with these pinned versions; the upstream peer warning remains.
+- The SDK's `@hiero-ledger/proto@2.31.0` dependency declares exact peer versions
+  for `protobufjs` and `debug` that differ from the resolved patch versions. pnpm
+  reports these upstream peer warnings. Keep the declared dependency graph rather
+  than adding independent protobuf or debug overrides.
 
 ## A0.3 provisioning decisions
 
@@ -174,3 +174,23 @@ real files.
 - The successful 2026-09-06 test settled `1000000` tinybars to provider A and is
   recorded in `docs/setup.md` as public evidence. This validates the facilitator
   path, not the later paid resource-server middleware or Koven authorization gate.
+
+## F08 implementation decisions
+
+- Credit requests, offers and acceptances share one canonical JSON encoder.
+  Signed bytes are UTF-8 `domain + "\\n" + canonicalJson`; Hedera ECDSA signatures
+  cover every unsigned field, while tinybar `bigint` values become exact decimal
+  strings before hashing.
+- The conservative lender derives quotes only from its registered mission policy,
+  trusted borrower key and local reputation input. It declines invalid limits and
+  any principal-plus-fee result that would exceed uint64.
+- Funding uses Hedera Agent Kit `4.1.0` in `AgentMode.AUTONOMOUS` and invokes
+  `transfer_hbar_tool` directly. A post-core-action hook assigns and persists the
+  transaction ID before the Agent Kit submits the built transfer.
+- One SQLite reservation owns each accepted offer. A fenced, expiring
+  compare-and-swap claim prevents concurrent or resumed workers from creating two
+  transfers; once a transaction ID exists, retries reconcile it instead of
+  resubmitting.
+- Confirmed funding creates a durable signer-registration outbox entry. The
+  lender reports success only after the signer acknowledges registration, while
+  registration retries reuse the confirmed funding transaction.
