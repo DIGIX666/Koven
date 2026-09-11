@@ -205,6 +205,25 @@ describe("MissionStateMachine", () => {
     expect(sink.events).toHaveLength(1);
   });
 
+  it("keeps a committed transition successful when best-effort publication fails", async () => {
+    const database = databaseForTest();
+    const sink = new NoopAuditSink();
+    const stateMachine = machineForTest(database, sink);
+    createMission(database, mission("mission-audit-failure"));
+    sink.failNext(new Error("audit unavailable"));
+
+    await expect(stateMachine.transition(
+      "mission-audit-failure",
+      "created",
+      "discovering-services",
+      { type: "mission-created", payload: {} },
+    )).resolves.toMatchObject({ state: "discovering-services" });
+
+    expect(getMission(database, "mission-audit-failure")?.state).toBe("discovering-services");
+    expect(listMissionEvents(database, "mission-audit-failure")).toHaveLength(1);
+    expect(sink.events).toEqual([]);
+  });
+
   it.each(["closed", "defaulted"] as const)(
     "keeps terminal state %s immutable",
     async (terminal) => {

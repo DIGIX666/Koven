@@ -6,6 +6,7 @@ import {
   PaymentReceiptSchema,
   PaymentRequirementsSchema,
   ScanReportSchema,
+  TransactionId,
 } from "@koven/schemas";
 import type { ResourceServer, X402Client } from "@koven/x402";
 import type { ClientHederaSigner } from "@x402/hedera";
@@ -86,13 +87,14 @@ describe("Track A fakes", () => {
     expectTypeOf(fake).toMatchTypeOf<HederaAdapter>();
 
     await expect(fake.transferHbar({ from: "0.0.10", to: "0.0.20", amountTinybar: 100n }))
-      .resolves.toEqual({ transactionId: "0.0.999@1", status: "SUCCESS" });
+      .resolves.toEqual({ transactionId: "0.0.999@1.000000000", status: "SUCCESS" });
     await expect(fake.transferHbar({ from: "0.0.10", to: "0.0.20", amountTinybar: 50n }))
-      .resolves.toEqual({ transactionId: "0.0.999@2", status: "SUCCESS" });
+      .resolves.toEqual({ transactionId: "0.0.999@2.000000000", status: "SUCCESS" });
 
     await expect(fake.getBalanceTinybar("0.0.10")).resolves.toBe(100n);
     await expect(fake.getBalanceTinybar("0.0.20")).resolves.toBe(150n);
     expect(fake.transfers).toHaveLength(2);
+    expect(TransactionId.safeParse("0.0.999@1.000000000").success).toBe(true);
   });
 
   it("injects a Hedera failure for one call without mutating the ledger", async () => {

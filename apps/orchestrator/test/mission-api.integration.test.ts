@@ -1,8 +1,19 @@
 import type { Server } from "node:http";
 
 import type { Application } from "express";
-import { getLoan, listMissionEvents, openDatabase, type KovenDatabase } from "@koven/persistence";
-import { CallbackResponseSchema, MissionDetailResponseSchema, MissionSchema } from "@koven/schemas";
+import {
+  getIdempotencyResult,
+  getLoan,
+  listMissionEvents,
+  openDatabase,
+  type KovenDatabase,
+} from "@koven/persistence";
+import {
+  CallbackResponseSchema,
+  MAX_HTTP_BODY_BYTES,
+  MissionDetailResponseSchema,
+  MissionSchema,
+} from "@koven/schemas";
 import {
   FakeHederaAdapter,
   FakeSigner,
@@ -189,9 +200,13 @@ describe("orchestrator mission API on fakes", () => {
     expect(test.hedera.transfers).toHaveLength(2);
     expect(getLoan(test.database, "loan-mission-1")?.state).toBe("repaid");
     expect(test.sink.events).toHaveLength(detail.events.length);
+    const eventTypes = detail.events.map(event => event.type);
+    expect(eventTypes.indexOf("offer-accepted")).toBeLessThan(eventTypes.indexOf("loan-funded"));
+    expect(eventTypes.filter(type => type === "x402-settled")).toHaveLength(1);
+    expect(eventTypes).toContain("report-received");
   });
 
-  it("returns duplicate for the same completion callback without repaying twice", async () => {
+  it("returns 202 for a completion retry with refreshed authentication headers", async () => {
     const test = runtime();
     const baseUrl = await listen(test.app);
     await fetch(`${baseUrl}/missions`, {
@@ -200,25 +215,44 @@ describe("orchestrator mission API on fakes", () => {
       body: JSON.stringify(createRequest()),
     });
     const callback = callbackBody(test.report);
+    const key = `mission-complete:mission-1:${reportSha256}`;
+
+    expect(getIdempotencyResult(test.database, key)?.statusCode).toBe(202);
 
     const duplicateResponse = await fetch(`${baseUrl}/callbacks/mission-complete`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "idempotency-key": `mission-complete:mission-1:${reportSha256}`,
-        "x-callback-timestamp": epochSeconds,
-        "x-callback-signature": hashCanonicalJson(callback),
+        "idempotency-key": key,
+        "x-callback-timestamp": String(Number(epochSeconds) + 1),
+        "x-callback-signature": "c".repeat(64),
       },
       body: JSON.stringify(callback),
     });
 
-    expect(duplicateResponse.status).toBe(200);
+    expect(duplicateResponse.status).toBe(202);
     expect(CallbackResponseSchema.parse(await duplicateResponse.json())).toEqual({
       status: "duplicate",
       code: "callback_duplicate",
     });
     expect(test.hedera.transfers).toHaveLength(2);
     expect(getLoan(test.database, "loan-mission-1")?.state).toBe("repaid");
+  });
+
+  it("returns source_too_large when the raw request exceeds the transport limit", async () => {
+    const test = runtime();
+    const baseUrl = await listen(test.app);
+    const response = await fetch(`${baseUrl}/missions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...createRequest(),
+        source: "a".repeat(MAX_HTTP_BODY_BYTES),
+      }),
+    });
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ code: "source_too_large" });
   });
 
   it("rejects invalid API input and conflicting callback reuse with frozen errors", async () => {

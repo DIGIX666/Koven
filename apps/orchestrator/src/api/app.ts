@@ -14,6 +14,7 @@ import {
   CompletionCallbackSchema,
   CreateMissionRequestSchema,
   ErrorResponseSchema,
+  MAX_HTTP_BODY_BYTES,
   MissionDetailResponseSchema,
   MissionParamsSchema,
   MissionSchema,
@@ -34,6 +35,10 @@ class ResponseContractError extends Error {}
 const isMalformedJson = (error: unknown): boolean => error instanceof SyntaxError
   && "type" in error
   && error.type === "entity.parse.failed";
+
+const isBodyTooLarge = (error: unknown): boolean => error instanceof Error
+  && "type" in error
+  && error.type === "entity.too.large";
 
 const asyncRoute = (handler: RequestHandler): RequestHandler => (request, response, next) => {
   Promise.resolve(handler(request, response, next)).catch(next);
@@ -60,7 +65,7 @@ const missionResponse = (mission: PersistedMission) => ({
 export function createOrchestratorApp(options: OrchestratorAppOptions): Application {
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: MAX_HTTP_BODY_BYTES }));
 
   app.post("/missions", asyncRoute(async (request, response) => {
     const input = CreateMissionRequestSchema.parse(request.body);
@@ -84,6 +89,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
   }));
 
   app.post("/callbacks/mission-complete", asyncRoute(async (request, response) => {
+    // Provider HMAC verification and its timestamp window are implemented in B2.4.
     const callback = CompletionCallbackSchema.parse(request.body);
     const headers = CallbackHeadersSchema.parse({
       "idempotency-key": request.get("idempotency-key"),
@@ -95,7 +101,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
       timestamp: headers["x-callback-timestamp"],
       signature: headers["x-callback-signature"],
     });
-    response.json(responseContract(CallbackResponseSchema, result));
+    response.status(202).json(responseContract(CallbackResponseSchema, result));
   }));
 
   const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
@@ -103,7 +109,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
     let code: ErrorCode = ErrorCode.INTERNAL_ERROR;
     let detail = "Internal server error";
 
-    if (error instanceof ZodError || isMalformedJson(error)) {
+    if (isBodyTooLarge(error)) {
+      status = 413;
+      code = ErrorCode.SOURCE_TOO_LARGE;
+      detail = "Request body exceeds the transport limit";
+    } else if (error instanceof ZodError || isMalformedJson(error)) {
       status = 400;
       code = ErrorCode.REQUEST_INVALID;
       detail = error instanceof ZodError

@@ -103,6 +103,7 @@ export class MissionWorkflow {
 
       if (requiredCredit > 0n) {
         await move("credit-requested", "credit-requested", { principalTinybar: requiredCredit });
+        // Track A keeps credit negotiation inline; F09 replaces it with the real credit service.
         const offers = requestCredit(
           id,
           requiredCredit,
@@ -112,8 +113,11 @@ export class MissionWorkflow {
         );
         const offer = selectOffer(offers);
         loan = await this.acceptOffer(id, offer);
-        await move("funded", "loan-funded", { loanId: loan.id, fundingTxId: loan.fundingTxId });
-        await move("payment-preparation", "offer-accepted", { offerId: offer.id });
+        await move("funded", "offer-accepted", { offerId: offer.id });
+        await move("payment-preparation", "loan-funded", {
+          loanId: loan.id,
+          fundingTxId: loan.fundingTxId,
+        });
       } else {
         await move("payment-preparation", "providers-ranked", { ranked });
       }
@@ -133,6 +137,7 @@ export class MissionWorkflow {
       const signedTransaction = await this.options.signer
         .createPartiallySignedTransferTransaction(challenge.requirements);
       const transactionSha256 = hashBase64(signedTransaction);
+      // Track A reserves signer-owned state locally; F09 moves this behind the signer boundary.
       reserveSpending(this.options.database, {
         missionId: id,
         nonce: "1",
@@ -140,6 +145,7 @@ export class MissionWorkflow {
         amountTinybar,
         consumedAt: this.now(),
       });
+      // Track A builds a placeholder authorization; F09 consumes AuthorizeResponse remotely.
       const authorization = createAuthorization(
         id,
         targetSha256,
@@ -164,7 +170,10 @@ export class MissionWorkflow {
         providerId: provider.id,
         amountTinybar,
       }, paid.receipt.transactionId);
-      await move("running", "x402-settled", { providerId: provider.id });
+      await move("running", "report-received", {
+        providerId: provider.id,
+        reportSha256: paid.report.reportSha256,
+      });
 
       const callback = {
         outcome: {
@@ -188,6 +197,7 @@ export class MissionWorkflow {
         await move("closed", "mission-completed", { reportSha256: paid.report.reportSha256 });
       } else {
         await move("repayment-pending", "mission-completed", { loanId: loan.id });
+        // Track A repays inline; F09 delegates this to the restricted signer service.
         const repaymentTxId = await this.repay(loan);
         await move("repaid", "repayment-settled", { loanId: loan.id, repaymentTxId });
         await move("closed", "repayment-settled", { loanId: loan.id });
@@ -295,6 +305,7 @@ export function rankProviders(
   providers: readonly Provider[],
   maxBudgetTinybar: bigint,
 ): RankedProvider[] {
+  // B4.1 adds capability filtering and the final scoring policy.
   const denominator = Number(maxBudgetTinybar === 0n ? 1n : maxBudgetTinybar);
   return providers.map(provider => {
     const price = 1 - Math.min(Number(provider.priceTinybar) / denominator, 1);

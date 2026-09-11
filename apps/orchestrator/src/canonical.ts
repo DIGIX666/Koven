@@ -11,7 +11,7 @@ export const canonicalJsonValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalJsonValue);
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+      Object.entries(value).sort()
         .map(([key, nested]) => [key, canonicalJsonValue(nested)]),
     );
   }

@@ -46,8 +46,7 @@ export class CompletionHandler {
 
     const requestHash = hashCanonicalJson({
       callback,
-      timestamp: headers.timestamp,
-      signature: headers.signature,
+      idempotencyKey: headers.idempotencyKey,
     });
     const existing = getIdempotencyResult<HttpResponse<"completion">>(
       this.database,
@@ -91,7 +90,7 @@ export class CompletionHandler {
       () => createIdempotencyResult(this.database, {
         key: headers.idempotencyKey,
         requestHash,
-        statusCode: 200,
+        statusCode: 202,
         response,
         createdAt: this.now(),
       }),

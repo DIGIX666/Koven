@@ -50,7 +50,10 @@ export class FakeHederaAdapter implements HederaAdapter {
     this.balances.set(request.to, (this.balances.get(request.to) ?? 0n) + request.amountTinybar);
     this.transfers.push({ ...request });
     this.sequence += 1;
-    return { transactionId: `${this.transactionPayer}@${this.sequence}`, status: "SUCCESS" };
+    return {
+      transactionId: `${this.transactionPayer}@${this.sequence}.000000000`,
+      status: "SUCCESS",
+    };
   }
 
   private throwQueuedFailure(operation: FakeHederaOperation): void {
