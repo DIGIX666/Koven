@@ -180,11 +180,42 @@ versioned release; existing release assets and hashes are never replaced.
 
 ## Measurements
 
-Pending the benchmark run.
+Measurements were taken on 2026-09-11 on an Apple M4 Pro (`arm64`) running
+macOS/Darwin 25.6.0, Node.js 24.13.0, Circom 2.2.3 and SnarkJS 0.7.6. The test
+uses the fixed vector above and the official released artifacts. It performs one
+unmeasured warm-up followed by ten in-process samples. Times use a monotonic
+clock and therefore exclude process startup and artifact download time.
+
+| Measurement | Median | Observed range |
+| --- | ---: | ---: |
+| Witness construction | 26.554 ms | 25.950–29.362 ms |
+| Groth16 proving | 53.650 ms | 52.589–60.707 ms |
+| Restricted signer verification | 5.346 ms | 4.927–5.926 ms |
+| Independent lender verification | 5.226 ms | 5.062–5.634 ms |
+| Minified proof JSON size | 722.5 bytes | 720–725 bytes |
+
+The compiled circuit has 1,714 constraints and exactly three public signals.
+Proof size is the UTF-8 byte length of `JSON.stringify(proof)` and excludes the
+three public-signal strings. Each sample constructs a new witness and randomized
+proof, then verifies that proof twice against separately parsed copies of the
+official verification key. These are feasibility measurements from one
+development machine, not production latency guarantees; the executable test is
+the reproducible source of the measurement method.
 
 ## Verification placement decision
 
-Pending the benchmark results. Signer verification and independent lender verification are
-already architectural requirements; the measurements will establish their cost
-and whether any on-chain verifier has enough enforcement or audit value to
-justify its inclusion.
+The restricted signer must verify the proof before signing any payment. This is
+the enforcement point that controls the consumer key and can reject a commitment,
+root or cap that differs from trusted mission state.
+
+The lender must independently verify the same proof bundle in its own process,
+using its own pinned copy of the verification key and trusted mission policy.
+The measured steady-state cost of roughly 5.3 ms per verifier is small relative
+to the network payment flow and makes proof portability practical for the MVP.
+
+No on-chain verifier is adopted for the MVP. Hedera `exact` settlement is a
+facilitator-submitted transfer, so a verifier contract outside that path cannot
+prevent an invalid payment. It would duplicate verification while adding
+deployment, integration and operational complexity. Reconsider on-chain
+verification only if settlement is changed so that a contract gates the transfer,
+or if a concrete public-audit requirement justifies publishing proofs on-chain.
