@@ -16,6 +16,27 @@
   "references": [
     {
       "path": "../../tsconfig.tools.json"
+    },
+    {
+      "path": "../../packages/audit/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/config/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/domain/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/hedera/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/persistence/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/schemas/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/x402/tsconfig.build.json"
     }
   ]
 }

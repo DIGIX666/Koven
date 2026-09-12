@@ -3,10 +3,28 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
+    "dev": "tsx --env-file=../../.env src/main.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/restricted-signer --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/restricted-signer"
+  },
+  "dependencies": {
+    "@koven/audit": "workspace:*",
+    "@koven/config": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/hedera": "workspace:*",
+    "@koven/persistence": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "@koven/x402": "workspace:*",
+    "@x402/hedera": "2.24.0",
+    "express": "5.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@koven/resource-server": "workspace:*",
+    "@types/express": "5.0.3"
   }
 }

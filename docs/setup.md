@@ -124,6 +124,40 @@ pnpm --filter @koven/resource-server dev
 An unpaid `POST /scan` with a source-bound `ScanRequest` then answers `402` with
 a `PAYMENT-REQUIRED` header and an empty body.
 
+## Restricted signer configuration
+
+The restricted signer (`services/restricted-signer`, A2.4) is the only process
+that receives `CONSUMER_PRIVATE_KEY`. Besides the signer variables validated by
+`@koven/config` (`CONSUMER_ACCOUNT_ID`, `CONSUMER_PRIVATE_KEY`,
+`HEDERA_MIRROR_NODE_URL`, `RESTRICTED_SIGNER_PORT`, `DATABASE_URL`, ...) it
+reads:
+
+| Variable | Meaning |
+| --- | --- |
+| `RESTRICTED_SIGNER_HOST` | Interface the listener binds to; defaults to `127.0.0.1` |
+| `SIGNER_CONSUMER_CREDENTIAL` | Credential presented by the consumer agent on `/authorize`, `/sign-credit-request` and `/sign-credit-acceptance` |
+| `SIGNER_ORCHESTRATOR_CREDENTIAL` | Credential presented by the orchestrator on `/repay` |
+| `SIGNER_REGISTRAR_CREDENTIAL` | Trusted operator/registrar credential for `/internal/missions/register` |
+| `SIGNER_LENDER_CREDENTIALS` | `accountId:credential` pairs separated by `;`; the credential fixes the lender identity on `/internal/loans/register` |
+| `SIGNER_LENDER_PUBLIC_KEYS` | `accountId:publicKey` pairs; offers are verified against these pinned keys only |
+| `SIGNER_PROVIDER_CALLBACK_SECRETS` | `providerId:secret` pairs; `/internal/missions/complete` verifies the provider MAC with the secret of the mission's selected provider |
+
+Credentials are independently generated opaque secrets, 32 bytes or more,
+unpadded base64url (`node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`).
+The signer keeps its own SQLite database (`DATABASE_URL`) with the nonce,
+budget, loan, completion and repayment tables; the orchestrator never opens it.
+`/internal/missions/complete` receives the provider's raw callback bytes and
+headers forwarded unchanged by the orchestrator.
+
+Run it from the repository root with root `.env` loaded:
+
+```sh
+pnpm --filter @koven/restricted-signer dev
+```
+
+`GET /health` answers `{ "status": "ok", "circuitId": "koven-policy-v1", "vkeyHash": null }`
+until M3 pins a verification key.
+
 ## Checklist for a new local setup
 
 - [ ] Six distinct numeric testnet IDs are mapped to the roles above.
