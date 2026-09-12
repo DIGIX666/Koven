@@ -24,17 +24,23 @@ export const CIRCUIT_ID = "koven-policy-v1";
 export class KeyedMutex {
   private readonly tails = new Map<string, Promise<void>>();
 
+  /** Keys currently holding or waiting for the lock; zero once every task settled. */
+  get size(): number {
+    return this.tails.size;
+  }
+
   async run<T>(key: string, task: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(key) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>(resolve => { release = resolve; });
-    this.tails.set(key, previous.then(() => current));
+    const tail = previous.then(() => current);
+    this.tails.set(key, tail);
     await previous;
     try {
       return await task();
     } finally {
       release();
-      if (this.tails.get(key) === current) this.tails.delete(key);
+      if (this.tails.get(key) === tail) this.tails.delete(key);
     }
   }
 }

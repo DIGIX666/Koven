@@ -6,8 +6,17 @@ import {
   CallbackHeadersSchema,
   CallbackResponseSchema,
   CompletionCallbackSchema,
+  Id,
+  Sha256,
   type HttpResponse,
 } from "@koven/schemas";
+import { z } from "zod";
+
+/** Only what is needed to resolve the mission's provider secret before the MAC is checked. */
+const CallbackEnvelope = z.object({
+  outcome: z.object({ missionId: Id }).passthrough(),
+  report: z.object({ reportSha256: Sha256 }).passthrough(),
+}).passthrough();
 
 import { canonicalJson, sha256Hex } from "./canonical.js";
 import { fail } from "./errors.js";
@@ -69,14 +78,15 @@ export class CompletionService {
     } catch {
       fail(ErrorCode.CALLBACK_AUTH_INVALID, "Callback body is not valid JSON");
     }
-    const callback = CompletionCallbackSchema.safeParse(parsedBody);
-    if (!callback.success) fail(ErrorCode.REPORT_SCHEMA_INVALID, "Callback does not match the completion contract");
-    const { outcome, report } = callback.data;
-    if (idempotencyKey !== `mission-complete:${outcome.missionId}:${report.reportSha256}`) {
+    // Authentication first: resolve the mission and its provider secret from
+    // the envelope alone, verify the MAC over the raw bytes, and only then
+    // validate the report contract, so an unauthenticated caller learns nothing.
+    const envelope = CallbackEnvelope.safeParse(parsedBody);
+    if (!envelope.success) fail(ErrorCode.CALLBACK_AUTH_INVALID, "Callback envelope does not identify a mission and report");
+    if (idempotencyKey !== `mission-complete:${envelope.data.outcome.missionId}:${envelope.data.report.reportSha256}`) {
       fail(ErrorCode.CALLBACK_AUTH_INVALID, "Idempotency key does not match the callback body");
     }
-
-    const policy = this.options.store.getMissionPolicy(outcome.missionId);
+    const policy = this.options.store.getMissionPolicy(envelope.data.outcome.missionId);
     if (policy === undefined) fail(ErrorCode.MISSION_POLICY_MISSING, "Mission policy is not provisioned");
     const secret = this.options.providerCallbackSecrets[policy.provider.id];
     if (secret === undefined) fail(ErrorCode.CALLBACK_AUTH_INVALID, "No callback secret is pinned for the selected provider");
@@ -85,6 +95,10 @@ export class CompletionService {
     if (expected.length !== presented.length || !timingSafeEqual(expected, presented)) {
       fail(ErrorCode.CALLBACK_AUTH_INVALID, "Callback signature is invalid");
     }
+
+    const callback = CompletionCallbackSchema.safeParse(parsedBody);
+    if (!callback.success) fail(ErrorCode.REPORT_SCHEMA_INVALID, "Callback does not match the completion contract");
+    const { outcome, report } = callback.data;
 
     const { reportSha256, ...unsigned } = report;
     if (

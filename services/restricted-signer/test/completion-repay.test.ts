@@ -135,6 +135,11 @@ describe("/internal/missions/complete", () => {
     const tampered = callback(settlementTxId, body, "1789214400");
     await failure({ ...tampered, headers: { ...tampered.headers, "idempotency-key": `mission-complete:mission-1:${"0".repeat(64)}` } }, "callback_auth_invalid");
     await failure({ ...tampered, body: Buffer.from(tampered.body.toString("utf8").replace('"findings":[]', '"findings":[ ]'), "utf8") }, "callback_auth_invalid");
+    // A schema-invalid body under an invalid MAC reveals nothing but the authentication failure.
+    const invalidReport = { ...body, report: { ...body.report, findings: "not-a-list" } };
+    await failure(callback(settlementTxId, invalidReport, "1789214400", Buffer.alloc(32, 9)), "callback_auth_invalid");
+    // The same body under a valid MAC is a contract failure.
+    await failure(callback(settlementTxId, invalidReport, "1789214400"), "report_schema_invalid");
     expect(confirmer.confirm).not.toHaveBeenCalled();
     expect(store.getCompletion("mission-1")).toBeUndefined();
   });

@@ -10,6 +10,7 @@ import {
   Status,
   Transaction,
   TransactionId,
+  TransactionReceiptQuery,
   TransferTransaction,
   type Client,
 } from "@koven/hedera";
@@ -76,6 +77,14 @@ export class SdkRepaymentLedger implements RepaymentLedger {
   }
 
   /**
+   * Submits the persisted bytes and reads the receipt for the persisted
+   * transaction ID through `TransactionReceiptQuery`, never through
+   * `TransactionResponse.getReceipt()`: the latter reacts to
+   * `THROTTLED_AT_CONSENSUS` by regenerating the ID and resubmitting, which
+   * would move funds under an ID this store never recorded. Here a throttled
+   * receipt is a definite failure of that ID and the service builds and
+   * persists the replacement itself.
+   *
    * A receipt is consensus: success or a definite failure. A precheck
    * rejection never reached consensus, except `DUPLICATE_TRANSACTION`, which
    * means these bytes were already accepted and must be reconciled instead.
@@ -83,9 +92,12 @@ export class SdkRepaymentLedger implements RepaymentLedger {
    */
   async submit(transactionBase64: string): Promise<SubmissionOutcome> {
     const transaction = Transaction.fromBytes(Buffer.from(transactionBase64, "base64"));
+    const persistedId = transaction.transactionId;
+    if (persistedId === null) throw new Error("Stored repayment bytes carry no transaction ID");
     try {
       const response = await transaction.execute(this.client);
-      const receipt = await response.getReceipt(this.client);
+      if (response.transactionId.toString() !== persistedId.toString()) return "uncertain";
+      const receipt = await new TransactionReceiptQuery().setTransactionId(persistedId).execute(this.client);
       return receipt.status === Status.Success ? "success" : "failed";
     } catch (error) {
       if (error instanceof ReceiptStatusError) return "failed";

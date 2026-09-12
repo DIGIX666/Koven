@@ -127,24 +127,23 @@ describe("SdkRepaymentLedger.prepare", () => {
 });
 
 describe("SdkRepaymentLedger.submit", () => {
-  it("classifies receipt failures and prechecks as failed, duplicates and network errors as uncertain", async () => {
-    const { AccountId, Client, PrecheckStatusError, ReceiptStatusError, Status, Transaction, TransactionId } = await import("@koven/hedera");
+  it("classifies precheck rejections as failed, duplicates and network errors as uncertain", async () => {
+    const { AccountId, Client, PrecheckStatusError, Status, Transaction, TransactionId } = await import("@koven/hedera");
     const { SdkRepaymentLedger } = await import("../src/repay.js");
     const client = Client.forTestnet().setOperator("0.0.1001", consumer);
     const transactionId = TransactionId.generate("0.0.1001");
     const outcomes: unknown[] = [
-      new ReceiptStatusError({ transactionReceipt: {} as never, status: Status.InsufficientPayerBalance, transactionId }),
       new PrecheckStatusError({ status: Status.InsufficientTxFee, transactionId, contractFunctionResult: null, nodeId: AccountId.fromString("0.0.3") }),
       new PrecheckStatusError({ status: Status.DuplicateTransaction, transactionId, contractFunctionResult: null, nodeId: AccountId.fromString("0.0.3") }),
       new Error("socket hang up"),
     ];
     const spy = vi.spyOn(Transaction, "fromBytes").mockImplementation(() => ({
+      transactionId,
       execute: async () => { throw outcomes.shift(); },
     }) as never);
     try {
       const ledger = new SdkRepaymentLedger(client, "0.0.1001", consumer);
       const bytes = Buffer.from("x").toString("base64");
-      expect(await ledger.submit(bytes)).toBe("failed");
       expect(await ledger.submit(bytes)).toBe("failed");
       expect(await ledger.submit(bytes)).toBe("uncertain");
       expect(await ledger.submit(bytes)).toBe("uncertain");
@@ -152,5 +151,61 @@ describe("SdkRepaymentLedger.submit", () => {
       spy.mockRestore();
       client.close();
     }
+  });
+
+  it("reads the receipt for the persisted id and treats a throttled receipt as that id's failure", async () => {
+    const { Client, ReceiptStatusError, Status, Transaction, TransactionId, TransactionReceiptQuery } = await import("@koven/hedera");
+    const { SdkRepaymentLedger } = await import("../src/repay.js");
+    const client = Client.forTestnet().setOperator("0.0.1001", consumer);
+    const transactionId = TransactionId.generate("0.0.1001");
+    const responseIds = [transactionId, transactionId, TransactionId.generate("0.0.1001")];
+    const getReceipt = vi.fn();
+    const fromBytes = vi.spyOn(Transaction, "fromBytes").mockImplementation(() => ({
+      transactionId,
+      execute: async () => ({ transactionId: responseIds.shift(), getReceipt }),
+    }) as never);
+    const receipts: unknown[] = [
+      () => { throw new ReceiptStatusError({ transactionReceipt: {} as never, status: Status.ThrottledAtConsensus, transactionId }); },
+      () => ({ status: Status.Success }),
+    ];
+    const queried: string[] = [];
+    const setId = vi.spyOn(TransactionReceiptQuery.prototype, "setTransactionId").mockImplementation(function (this: InstanceType<typeof TransactionReceiptQuery>, id) {
+      queried.push(String(id));
+      return this;
+    });
+    const execute = vi.spyOn(TransactionReceiptQuery.prototype, "execute").mockImplementation(async () => (receipts.shift() as () => unknown)() as never);
+    try {
+      const ledger = new SdkRepaymentLedger(client, "0.0.1001", consumer);
+      const bytes = Buffer.from("x").toString("base64");
+      // Throttled at consensus: the SDK's response.getReceipt() would have
+      // resubmitted under a fresh id; here it is a definite failure of this id.
+      expect(await ledger.submit(bytes)).toBe("failed");
+      expect(await ledger.submit(bytes)).toBe("success");
+      expect(queried).toEqual([transactionId.toString(), transactionId.toString()]);
+      expect(getReceipt).not.toHaveBeenCalled();
+      // A response that does not carry the persisted id is never trusted.
+      expect(await ledger.submit(bytes)).toBe("uncertain");
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      fromBytes.mockRestore();
+      setId.mockRestore();
+      execute.mockRestore();
+      client.close();
+    }
+  });
+});
+
+describe("KeyedMutex", () => {
+  it("serialises tasks per key and releases entries once they settle", async () => {
+    const { KeyedMutex } = await import("../src/gate.js");
+    const mutex = new KeyedMutex();
+    const order: string[] = [];
+    const first = mutex.run("k", async () => { await new Promise(resolve => setTimeout(resolve, 5)); order.push("first"); });
+    const second = mutex.run("k", async () => { order.push("second"); });
+    const other = mutex.run("other", async () => { order.push("other"); throw new Error("boom"); });
+    await expect(other).rejects.toThrow("boom");
+    await Promise.all([first, second]);
+    expect(order).toEqual(["other", "first", "second"]);
+    expect(mutex.size).toBe(0);
   });
 });
