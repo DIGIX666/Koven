@@ -209,6 +209,22 @@ importers:
       '@koven/domain':
         specifier: workspace:*
         version: link:../domain
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@x402/core':
+        specifier: 2.24.0
+        version: 2.24.0
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
+      circomlibjs:
+        specifier: 0.1.7
+        version: 0.1.7
+    devDependencies:
+      '@koven/resource-server':
+        specifier: workspace:*
+        version: link:../../services/resource-server
 
   packages/zk-policy:
     devDependencies:
@@ -264,7 +280,45 @@ importers:
         specifier: 5.0.3
         version: 5.0.3
 
-  services/restricted-signer: {}
+  services/restricted-signer:
+    dependencies:
+      '@koven/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+      '@koven/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../../packages/hedera
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
+      express:
+        specifier: 5.1.0
+        version: 5.1.0
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@koven/resource-server':
+        specifier: workspace:*
+        version: link:../resource-server
+      '@types/express':
+        specifier: 5.0.3
+        version: 5.0.3
 
   tests/e2e: {}
 
