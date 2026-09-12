@@ -173,6 +173,25 @@ importers:
       '@koven/domain':
         specifier: workspace:*
         version: link:../domain
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@x402/core':
+        specifier: 2.24.0
+        version: 2.24.0
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.2.0)(strip-ansi@7.1.2)
+      circomlibjs:
+        specifier: 0.1.7
+        version: 0.1.7
+    devDependencies:
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../hedera
+      '@koven/resource-server':
+        specifier: workspace:*
+        version: link:../../services/resource-server
 
   packages/zk-policy:
     devDependencies:
