@@ -40,6 +40,7 @@ export async function createSignerRuntime(source: EnvironmentSource = process.en
         accountId: config.accountId,
         privateKey: config.privateKey,
         network: config.network,
+        proofMode: config.proofMode,
         poseidon: await loadPoseidon(),
       }),
       credit: new CreditService({

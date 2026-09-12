@@ -9,8 +9,12 @@ const CREDENTIAL = /^[A-Za-z0-9_-]{43,}$/;
 const CALLBACK_SECRET = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_HOST = "127.0.0.1";
 
+/** M2 runs the deterministic gate; the ZK mode is a later deployment configuration, never a request field. */
+export type ProofMode = "deterministic";
+
 export interface SignerConfig {
   readonly network: "hedera:testnet";
+  readonly proofMode: ProofMode;
   readonly accountId: string;
   readonly privateKey: PrivateKey;
   /** The configured key text, handed only to the Hedera client factory. */
@@ -104,6 +108,11 @@ export function loadSignerConfig(source: EnvironmentSource = process.env): Signe
   const privateKey = validate("CONSUMER_PRIVATE_KEY", () => PrivateKey.fromStringECDSA(base.privateKey), invalid);
   const mirrorNodeUrl = validate("HEDERA_MIRROR_NODE_URL", () => trustedOrigin(base.mirrorNodeUrl), invalid);
   const host = validate("RESTRICTED_SIGNER_HOST", () => bindHost(source.RESTRICTED_SIGNER_HOST || DEFAULT_HOST), invalid);
+  const proofMode = validate("SIGNER_PROOF_MODE", (): ProofMode => {
+    const value = source.SIGNER_PROOF_MODE || "deterministic";
+    if (value !== "deterministic") throw new Error("Unsupported proof mode");
+    return value;
+  }, invalid);
   const consumer = credential(source, "SIGNER_CONSUMER_CREDENTIAL", invalid);
   const orchestrator = credential(source, "SIGNER_ORCHESTRATOR_CREDENTIAL", invalid);
   const registrar = credential(source, "SIGNER_REGISTRAR_CREDENTIAL", invalid);
@@ -134,17 +143,23 @@ export function loadSignerConfig(source: EnvironmentSource = process.env): Signe
     return map;
   }, invalid);
 
+  if (lenders && lenderPublicKeys) {
+    for (const accountId of Object.values(lenders)) {
+      if (!(accountId in lenderPublicKeys)) invalid.push("SIGNER_LENDER_PUBLIC_KEYS");
+    }
+  }
   const distinct = new Set([consumer, orchestrator, registrar, ...Object.keys(lenders ?? {})]);
   if (distinct.size !== 3 + Object.keys(lenders ?? {}).length) {
     invalid.push("SIGNER_CONSUMER_CREDENTIAL", "SIGNER_ORCHESTRATOR_CREDENTIAL", "SIGNER_REGISTRAR_CREDENTIAL", "SIGNER_LENDER_CREDENTIALS");
   }
 
-  if (invalid.length > 0 || !privateKey || !mirrorNodeUrl || !host || !lenders || !lenderPublicKeys || !providerCallbackSecrets) {
+  if (invalid.length > 0 || !privateKey || !mirrorNodeUrl || !host || !proofMode || !lenders || !lenderPublicKeys || !providerCallbackSecrets) {
     throw new EnvironmentValidationError([...new Set(invalid)].sort());
   }
 
   return Object.freeze({
     network: base.x402Network,
+    proofMode,
     accountId: base.accountId,
     privateKey,
     privateKeyText: base.privateKey,

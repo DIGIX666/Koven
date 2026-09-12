@@ -110,6 +110,16 @@ afterEach(async () => {
   stores.splice(0).forEach(store => store.close());
 });
 
+/** Reserves a free loopback port so the provider's canonical scan URL is known before it listens. */
+const freePort = (): Promise<number> => new Promise((resolve, reject) => {
+  const probe = createServer();
+  probe.once("error", reject);
+  probe.listen(0, "127.0.0.1", () => {
+    const address = probe.address();
+    probe.close(() => (address && typeof address !== "string" ? resolve(address.port) : reject(new Error("no port"))));
+  });
+});
+
 const listen = async (server: Server): Promise<string> => {
   servers.push(server);
   await new Promise<void>((resolve, reject) => {
@@ -124,7 +134,7 @@ const listen = async (server: Server): Promise<string> => {
 /** A real F06 provider, on a fixed port so its canonical scan URL is known before it listens. */
 async function provider() {
   const signingKey = PrivateKey.generateECDSA();
-  const port = 4400 + Math.floor(Math.random() * 500);
+  const port = await freePort();
   const scanUrl = `http://127.0.0.1:${port}/scan`;
   const facilitator = new FakeFacilitator();
   const store = new ProviderStore(":memory:");
@@ -340,6 +350,25 @@ describe("HttpX402Client", () => {
     await expect(attempt).rejects.toBeInstanceOf(X402RequestError);
     await expect(attempt).rejects.toMatchObject({ status: 401, code: "payment_authorization_invalid" });
     expect(facilitator.verify).not.toHaveBeenCalled();
+  });
+});
+
+describe("HttpX402Client refusals", () => {
+  it("surfaces a provider 402 on the paid retry with the reason carried in the header", async () => {
+    const { scanUrl, facilitator, authorizer } = await provider();
+    facilitator.verify.mockResolvedValueOnce({ isValid: false, invalidReason: "invalid_signature", payer: consumerAccountId });
+    const client = new HttpX402Client({ scanUrl, now: () => observedAt });
+    const signer = signerFor(authorizer, scanUrl);
+    const challenge = await client.request(scanRequest);
+    const transaction = await signer.createPartiallySignedTransferTransaction(challenge.requirements);
+    const authorization = signer.authorizationFor(transaction)!;
+
+    const attempt = client.retryWithPayment(
+      { ...scanRequest, paymentAuthorization: { ...authorization, amountTinybar: BigInt(authorization.amountTinybar) } },
+      transaction,
+    );
+    await expect(attempt).rejects.toMatchObject({ status: 402, code: "payment_authorization_invalid", detail: "invalid_signature" });
+    expect(facilitator.settle).not.toHaveBeenCalled();
   });
 });
 

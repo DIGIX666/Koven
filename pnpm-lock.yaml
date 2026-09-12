@@ -186,9 +186,6 @@ importers:
         specifier: 0.1.7
         version: 0.1.7
     devDependencies:
-      '@koven/hedera':
-        specifier: workspace:*
-        version: link:../hedera
       '@koven/resource-server':
         specifier: workspace:*
         version: link:../../services/resource-server

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 
 import type { FacilitatorClient } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements as SdkRequirements, SettleResponse, SupportedResponse, VerifyResponse } from "@x402/core/types";
@@ -45,6 +45,16 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   stores.splice(0).forEach(store => store.close());
   providerStores.splice(0).forEach(store => store.close());
+});
+
+/** Reserves a free loopback port so the provider's canonical scan URL is known before it listens. */
+const freePort = (): Promise<number> => new Promise((resolve, reject) => {
+  const probe = createServer();
+  probe.once("error", reject);
+  probe.listen(0, "127.0.0.1", () => {
+    const address = probe.address();
+    probe.close(() => (address && typeof address !== "string" ? resolve(address.port) : reject(new Error("no port"))));
+  });
 });
 
 const listen = async (server: Server): Promise<string> => {
@@ -99,7 +109,7 @@ const post = (baseUrl: string, path: string, body: unknown, token?: string) => f
 
 /** A real F06 provider on a fixed port so its canonical scan URL is known in advance. */
 async function provider() {
-  const port = 4400 + Math.floor(Math.random() * 500);
+  const port = await freePort();
   const endpoint = `http://127.0.0.1:${port}`;
   const facilitator = new FakeFacilitator();
   const store = new ProviderStore(":memory:");

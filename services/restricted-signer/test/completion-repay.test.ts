@@ -113,8 +113,11 @@ describe("/internal/missions/complete", () => {
     });
     expect(store.getCompletion("mission-1")).toMatchObject({ reportSha256: body.report.reportSha256, settlementTxId });
 
-    // A resend keeps body and key, refreshes timestamp and MAC.
+    // A resend keeps body and key, refreshes timestamp and MAC, and is answered
+    // from the stored key even while the ledger view is unavailable.
+    confirmer.confirm.mockRejectedValueOnce(new SignerError("settlement_unconfirmed", "Mirror unavailable"));
     await expect(completion.complete(callback(settlementTxId, body, "1789214405"))).resolves.toEqual({ status: "duplicate", code: "callback_duplicate" });
+    expect(confirmer.confirm).toHaveBeenCalledTimes(1);
     // A different report under the same mission cannot create a second completion.
     await expect(completion.complete(callback(settlementTxId, delivered(settlementTxId, { completedAt: "2026-09-12T12:00:01.000Z" }), "1789214406")))
       .rejects.toMatchObject({ code: "idempotency_conflict" });
@@ -184,17 +187,18 @@ describe("/repay", () => {
     const unsignedOffer = { ...terms, termsHash: termsHashFor(terms) };
     const offer = { ...unsignedOffer, signature: signDomain(lenderKey, CREDIT_SIGNATURE_DOMAINS.offer, unsignedOffer) };
     const signed = credit.signCreditAcceptance({ offer });
-    await credit.registerLoan(lenderAccountId, {
+    const registration = {
       loanId: "loan-1", request: { ...request, signature }, offer, acceptance: signed.acceptance,
       signatures: { acceptance: signed.signature }, fundingTxId: `${lenderAccountId}@1789128000.000000001`,
-    });
+    };
+    await credit.registerLoan(lenderAccountId, registration);
     let sequence = 0;
     const ledger: RepaymentLedger & { prepare: ReturnType<typeof vi.fn>; submit: ReturnType<typeof vi.fn> } = {
       prepare: vi.fn(async () => prepared(++sequence, f.clock.now.getTime() + 180_000)),
       submit: vi.fn(async () => "success" as const),
     };
     const repayment = () => new RepaymentService({ store: f.store, accountId: consumerAccountId, ledger, confirmer: f.confirmer, now: () => f.clock.now });
-    return { ...f, ledger, repayment, credit };
+    return { ...f, ledger, repayment, credit, registration };
   };
 
   const request = { missionId: "mission-1", loanId: "loan-1", idempotencyKey: "repayment:loan-1" };
@@ -216,6 +220,9 @@ describe("/repay", () => {
     expect(f.ledger.submit).toHaveBeenCalledTimes(1);
     const types = listMissionEvents(f.store.database, "mission-1").map(event => event.type);
     expect(types).toEqual(["repayment-settled", "repayment-idempotency-hit"]);
+
+    // A lender retrying a lost registration acknowledgement after repayment still succeeds.
+    await expect(f.credit.registerLoan(lenderAccountId, f.registration)).resolves.toEqual({ loanId: "loan-1", state: "funded" });
 
     await expect(service.repay({ ...request, idempotencyKey: "repayment:loan-2" })).rejects.toThrow();
     await expect(service.repay({ ...request, loanId: "loan-2", idempotencyKey: "repayment:loan-2" })).rejects.toMatchObject({ code: "not_found" });

@@ -100,6 +100,13 @@ export class CompletionService {
     if (authorization === undefined || authorization.missionId !== policy.missionId) {
       fail(ErrorCode.REPORT_BINDING_MISMATCH, "Settlement was not authorized by this signer for the mission");
     }
+
+    // An authenticated, correctly bound replay is answered from the stored
+    // key; only a first delivery consults the ledger.
+    const requestHash = sha256Hex(Buffer.concat([Buffer.from(`${idempotencyKey}.`, "utf8"), Buffer.from(raw.body)]));
+    const replay = this.options.store.completionReplay(policy.missionId, reportSha256, idempotencyKey, requestHash);
+    if (replay === "duplicate") return CallbackResponseSchema.parse({ status: "duplicate", code: ErrorCode.CALLBACK_DUPLICATE });
+
     await this.options.confirmer.confirm({
       transactionId: settlementTxId,
       payerAccountId: this.options.accountId,
@@ -110,7 +117,7 @@ export class CompletionService {
     const status = this.options.store.recordCompletion(
       { missionId: policy.missionId, reportSha256, settlementTxId, acceptedAt: this.now().toISOString() },
       idempotencyKey,
-      sha256Hex(Buffer.concat([Buffer.from(`${idempotencyKey}.`, "utf8"), Buffer.from(raw.body)])),
+      requestHash,
     );
     return CallbackResponseSchema.parse(
       status === "accepted" ? { status: "accepted" } : { status: "duplicate", code: ErrorCode.CALLBACK_DUPLICATE },

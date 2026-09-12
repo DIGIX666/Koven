@@ -4,7 +4,9 @@ import type { AuditEventType } from "@koven/audit";
 import { ErrorCode } from "@koven/domain";
 import {
   Hbar,
+  PrecheckStatusError,
   PrivateKey,
+  ReceiptStatusError,
   Status,
   Transaction,
   TransactionId,
@@ -73,16 +75,25 @@ export class SdkRepaymentLedger implements RepaymentLedger {
     return { transactionId, transactionBase64, validUntil: transactionValidUntil(transactionBase64, transactionId) };
   }
 
+  /**
+   * A receipt is consensus: success or a definite failure. A precheck
+   * rejection never reached consensus, except `DUPLICATE_TRANSACTION`, which
+   * means these bytes were already accepted and must be reconciled instead.
+   * Anything else (network errors, timeouts) is uncertain.
+   */
   async submit(transactionBase64: string): Promise<SubmissionOutcome> {
     const transaction = Transaction.fromBytes(Buffer.from(transactionBase64, "base64"));
-    let receiptStatus: Status;
     try {
       const response = await transaction.execute(this.client);
-      receiptStatus = (await response.getReceipt(this.client)).status;
-    } catch {
+      const receipt = await response.getReceipt(this.client);
+      return receipt.status === Status.Success ? "success" : "failed";
+    } catch (error) {
+      if (error instanceof ReceiptStatusError) return "failed";
+      if (error instanceof PrecheckStatusError) {
+        return error.status === Status.DuplicateTransaction ? "uncertain" : "failed";
+      }
       return "uncertain";
     }
-    return receiptStatus === Status.Success ? "success" : "failed";
   }
 }
 

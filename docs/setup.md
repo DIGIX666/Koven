@@ -135,6 +135,7 @@ reads:
 | Variable | Meaning |
 | --- | --- |
 | `RESTRICTED_SIGNER_HOST` | Interface the listener binds to; defaults to `127.0.0.1` |
+| `SIGNER_PROOF_MODE` | Payment gate mode; `deterministic` (default) is the M2 gate. The ZK mode is a later deployment setting, never a request field |
 | `SIGNER_CONSUMER_CREDENTIAL` | Credential presented by the consumer agent on `/authorize`, `/sign-credit-request` and `/sign-credit-acceptance` |
 | `SIGNER_ORCHESTRATOR_CREDENTIAL` | Credential presented by the orchestrator on `/repay` |
 | `SIGNER_REGISTRAR_CREDENTIAL` | Trusted operator/registrar credential for `/internal/missions/register` |

@@ -362,12 +362,19 @@ export class SignerStore {
     return row === undefined ? undefined : getLoan(this.database, row.id);
   }
 
-  /** Registers a verified funded loan once; identical registrations succeed, conflicting ones fail. */
+  /**
+   * Registers a verified funded loan once. Identical registrations succeed
+   * even after the loan moved on (a lender retrying a lost acknowledgement
+   * after repayment); registrations with different terms or funding fail.
+   */
   registerFundedLoan(loan: Loan & { fundingTxId: string }): Loan {
+    const terms = ({ id, offerId, missionId, lenderAccountId, principalTinybar, feeTinybar, fundingTxId }: Loan) => (
+      canonicalJson({ id, offerId, missionId, lenderAccountId, principalTinybar, feeTinybar, fundingTxId })
+    );
     const register = this.database.transaction((): Loan => {
       const existing = getLoan(this.database, loan.id);
       if (existing !== undefined) {
-        if (canonicalJson(existing) !== canonicalJson(loan)) {
+        if (terms(existing) !== terms(loan)) {
           fail(ErrorCode.LOAN_REGISTRATION_CONFLICT, "Loan is already registered with different terms");
         }
         return existing;
@@ -409,6 +416,26 @@ export class SignerStore {
       settlementTxId: row.settlement_tx_id,
       acceptedAt: row.accepted_at,
     };
+  }
+
+  /**
+   * "duplicate" when the key is stored with the same content. Conflicting
+   * content for the key, or a second report for a mission that already has an
+   * accepted completion, is rejected before any ledger lookup.
+   */
+  completionReplay(missionId: string, reportSha256: string, idempotencyKey: string, requestHash: string): "duplicate" | "new" {
+    const existing = getIdempotencyResult(this.database, idempotencyKey);
+    if (existing !== undefined) {
+      if (existing.requestHash !== requestHash) {
+        fail(ErrorCode.IDEMPOTENCY_CONFLICT, "Callback key was reused with different content");
+      }
+      return "duplicate";
+    }
+    const completion = this.getCompletion(missionId);
+    if (completion !== undefined && completion.reportSha256 !== reportSha256) {
+      fail(ErrorCode.IDEMPOTENCY_CONFLICT, "Mission already has an accepted completion");
+    }
+    return "new";
   }
 
   /**

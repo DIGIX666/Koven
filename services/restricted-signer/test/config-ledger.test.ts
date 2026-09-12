@@ -49,6 +49,9 @@ describe("loadSignerConfig", () => {
     expect(() => loadSignerConfig({ ...valid, HEDERA_MIRROR_NODE_URL: "http://mirror.example" })).toThrowError(/HEDERA_MIRROR_NODE_URL/);
     expect(() => loadSignerConfig({ ...valid, RESTRICTED_SIGNER_HOST: "http://0.0.0.0" })).toThrowError(/RESTRICTED_SIGNER_HOST/);
     expect(loadSignerConfig({ ...valid, RESTRICTED_SIGNER_HOST: "0.0.0.0" }).host).toBe("0.0.0.0");
+    expect(() => loadSignerConfig({ ...valid, SIGNER_LENDER_PUBLIC_KEYS: `0.0.4002:${lender.publicKey.toStringRaw()}` })).toThrowError(/SIGNER_LENDER_PUBLIC_KEYS/);
+    expect(loadSignerConfig(valid).proofMode).toBe("deterministic");
+    expect(() => loadSignerConfig({ ...valid, SIGNER_PROOF_MODE: "zk" })).toThrowError(/SIGNER_PROOF_MODE/);
   });
 });
 
@@ -118,6 +121,35 @@ describe("SdkRepaymentLedger.prepare", () => {
       expect(signatures.length).toBeGreaterThan(0);
       await expect(ledger.prepare({ from: "0.0.9999", to: "0.0.4001", amountTinybar: 1n, memo: "x" })).rejects.toThrow(/consumer account/);
     } finally {
+      client.close();
+    }
+  });
+});
+
+describe("SdkRepaymentLedger.submit", () => {
+  it("classifies receipt failures and prechecks as failed, duplicates and network errors as uncertain", async () => {
+    const { AccountId, Client, PrecheckStatusError, ReceiptStatusError, Status, Transaction, TransactionId } = await import("@koven/hedera");
+    const { SdkRepaymentLedger } = await import("../src/repay.js");
+    const client = Client.forTestnet().setOperator("0.0.1001", consumer);
+    const transactionId = TransactionId.generate("0.0.1001");
+    const outcomes: unknown[] = [
+      new ReceiptStatusError({ transactionReceipt: {} as never, status: Status.InsufficientPayerBalance, transactionId }),
+      new PrecheckStatusError({ status: Status.InsufficientTxFee, transactionId, contractFunctionResult: null, nodeId: AccountId.fromString("0.0.3") }),
+      new PrecheckStatusError({ status: Status.DuplicateTransaction, transactionId, contractFunctionResult: null, nodeId: AccountId.fromString("0.0.3") }),
+      new Error("socket hang up"),
+    ];
+    const spy = vi.spyOn(Transaction, "fromBytes").mockImplementation(() => ({
+      execute: async () => { throw outcomes.shift(); },
+    }) as never);
+    try {
+      const ledger = new SdkRepaymentLedger(client, "0.0.1001", consumer);
+      const bytes = Buffer.from("x").toString("base64");
+      expect(await ledger.submit(bytes)).toBe("failed");
+      expect(await ledger.submit(bytes)).toBe("failed");
+      expect(await ledger.submit(bytes)).toBe("uncertain");
+      expect(await ledger.submit(bytes)).toBe("uncertain");
+    } finally {
+      spy.mockRestore();
       client.close();
     }
   });

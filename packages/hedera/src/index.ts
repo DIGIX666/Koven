@@ -7,4 +7,5 @@ export { getTopicMessages, explorerUrl, type MirrorTopicMessage, type TopicMessa
 // Consumers must use this boundary instead of installing another SDK copy.
 export { AccountId, AccountInfoQuery, AccountCreateTransaction, Hbar, PrivateKey,
   PublicKey, Transaction, TransactionId, TransactionReceiptQuery,
-  TopicCreateTransaction, TopicId, TopicInfoQuery, TransferTransaction, Status, Client } from "@hiero-ledger/sdk";
+  TopicCreateTransaction, TopicId, TopicInfoQuery, TransferTransaction, Status, Client,
+  PrecheckStatusError, ReceiptStatusError } from "@hiero-ledger/sdk";

@@ -347,6 +347,16 @@ export class HttpX402Client implements X402Client {
       JSON.stringify({ ...ScanRequestSchema.parse(scanRequest), paymentAuthorization: authorization }),
       { "payment-signature": encodePaymentSignatureHeader(paymentPayload(challenge, signedTransaction)) },
     );
+    if (response.status === 402) {
+      // The provider (or its facilitator) refused this payment; the reason travels in the header.
+      let reason = "Provider refused the payment";
+      try {
+        reason = decodePaymentRequiredHeader(response.headers.get("payment-required") ?? "").error ?? reason;
+      } catch {
+        // keep the generic reason
+      }
+      throw new X402RequestError(402, ErrorCode.PAYMENT_AUTHORIZATION_INVALID, reason);
+    }
     if (response.status !== 200) throw await errorFromResponse(response, "Provider did not deliver the paid report");
 
     const settlementHeader = response.headers.get("payment-response");

@@ -16,7 +16,11 @@ import type { SignerStore, WireAuthorization } from "./store.js";
 
 export const CIRCUIT_ID = "koven-policy-v1";
 
-/** Serialises work per key so two authorizations for one mission never interleave. */
+/**
+ * Serialises work per key so two authorizations for one mission never
+ * interleave. The MVP runs a single signer instance; a multi-instance
+ * deployment would need a database-backed lease instead of this local lock.
+ */
 export class KeyedMutex {
   private readonly tails = new Map<string, Promise<void>>();
 
@@ -40,6 +44,8 @@ export interface PaymentGateOptions {
   readonly accountId: string;
   readonly privateKey: PrivateKey;
   readonly network: "hedera:testnet";
+  /** Deployment milestone configuration; M2 only knows the deterministic gate. */
+  readonly proofMode?: "deterministic";
   readonly poseidon: FieldHasher;
   readonly now?: () => Date;
   /** Test seam only; production always builds with the consumer key held here. */
@@ -71,6 +77,7 @@ export class PaymentGate {
   private readonly clientSigner: ClientHederaSigner;
 
   constructor(private readonly options: PaymentGateOptions) {
+    if ((options.proofMode ?? "deterministic") !== "deterministic") throw new Error("Unsupported payment gate mode");
     this.now = options.now ?? (() => new Date());
     this.clientSigner = options.clientSigner
       ?? createClientHederaSigner(options.accountId, options.privateKey, { network: options.network });
