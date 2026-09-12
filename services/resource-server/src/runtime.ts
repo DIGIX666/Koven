@@ -8,6 +8,7 @@ import { MirrorSettlementConfirmer } from "./settlement.js";
 type EnvironmentSource = Record<string, string | undefined>;
 
 export interface PaidScanRuntime extends PaidScanServer {
+  readonly host: string;
   readonly port: number;
   readonly store: ProviderStore;
   listen(): Promise<Server>;
@@ -37,10 +38,11 @@ export async function createPaidScanRuntime(
     });
     return {
       ...server,
+      host: config.host,
       port: config.port,
       store,
       async listen(): Promise<Server> {
-        const listener = server.app.listen(config.port, "127.0.0.1");
+        const listener = server.app.listen(config.port, config.host);
         await new Promise<void>((resolve, reject) => {
           listener.once("listening", resolve);
           listener.once("error", reject);

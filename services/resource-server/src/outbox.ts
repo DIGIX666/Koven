@@ -4,9 +4,9 @@ import Database from "better-sqlite3";
 import { validatePaymentPayload } from "@x402/core/schemas";
 import type { PaymentPayload, SettleResponse } from "@x402/core/types";
 import { ErrorCode, type ScanReport } from "@koven/domain";
-import { PaidScanRequestSchema, ScanReportSchema } from "@koven/schemas";
+import { AccountId, HttpUrl, PaidScanRequestSchema, ScanReportSchema, TinybarString } from "@koven/schemas";
 
-import type { PaidScanRequest, ValidatedPaymentAttempt } from "./authorization.js";
+import type { PaidScanRequest, PaymentPolicySnapshot, ValidatedPaymentAttempt } from "./authorization.js";
 import { canonicalJson, sha256Hex } from "./report.js";
 
 const PAYMENT_LEASE_MS = 30_000;
@@ -47,6 +47,8 @@ export interface StoredPayment {
   /** Unix milliseconds after which the Hedera transaction can no longer reach consensus. */
   readonly validUntil: number;
   readonly lastError: string | null;
+  /** Provider terms this payment was accepted under; retries and reconciliation use these. */
+  readonly policy: PaymentPolicySnapshot;
 }
 
 export interface PaymentClaim {
@@ -77,6 +79,7 @@ interface PaymentRow {
   lease_until: number | null;
   valid_until: number;
   last_error: string | null;
+  policy_json: string;
 }
 
 interface CallbackRow {
@@ -99,6 +102,34 @@ function parseObjectJson(value: string | null): Record<string, string> {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+function parsePolicyJson(value: string): PaymentPolicySnapshot {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ProviderStoreError(ErrorCode.INTERNAL_ERROR, 500, "Stored payment policy is invalid");
+  }
+  const record = parsed as Record<string, unknown>;
+  const providerAccountId = AccountId.safeParse(record.providerAccountId);
+  const feePayerAccountId = AccountId.safeParse(record.feePayerAccountId);
+  const scanUrl = HttpUrl.safeParse(record.scanUrl);
+  const amountTinybar = TinybarString.safeParse(record.amountTinybar);
+  if (
+    !providerAccountId.success
+    || !feePayerAccountId.success
+    || !scanUrl.success
+    || !amountTinybar.success
+    || record.network !== "hedera:testnet"
+    || record.asset !== "0.0.0"
+  ) throw new ProviderStoreError(ErrorCode.INTERNAL_ERROR, 500, "Stored payment policy is invalid");
+  return {
+    providerAccountId: providerAccountId.data,
+    scanUrl: scanUrl.data,
+    amountTinybar: amountTinybar.data,
+    network: "hedera:testnet",
+    asset: "0.0.0",
+    feePayerAccountId: feePayerAccountId.data,
+  };
+}
+
 function parsePaymentRow(row: PaymentRow): StoredPayment {
   const request = PaidScanRequestSchema.parse(JSON.parse(row.request_json));
   const paymentPayload = validatePaymentPayload(JSON.parse(row.payment_payload_json)) as PaymentPayload;
@@ -119,12 +150,13 @@ function parsePaymentRow(row: PaymentRow): StoredPayment {
     leaseUntil: row.lease_until,
     validUntil: row.valid_until,
     lastError: row.last_error,
+    policy: parsePolicyJson(row.policy_json),
   };
 }
 
 const PAYMENT_COLUMNS = `network, transaction_id, fingerprint, request_json, payment_payload_json,
         status, settlement_attempted, report_json, settlement_json,
-        response_headers_json, lease_token, lease_until, valid_until, last_error`;
+        response_headers_json, lease_token, lease_until, valid_until, last_error, policy_json`;
 
 export class ProviderStore {
   readonly database: Database.Database;
@@ -151,6 +183,7 @@ export class ProviderStore {
         lease_until INTEGER,
         valid_until INTEGER NOT NULL,
         last_error TEXT,
+        policy_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (network, transaction_id)
@@ -219,8 +252,8 @@ export class ProviderStore {
       this.database.prepare(`
         INSERT OR IGNORE INTO provider_paid_scans (
           network, transaction_id, fingerprint, request_json, payment_payload_json,
-          status, lease_token, lease_until, valid_until, created_at, updated_at
-        ) VALUES ('hedera:testnet', ?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?)
+          status, lease_token, lease_until, valid_until, policy_json, created_at, updated_at
+        ) VALUES ('hedera:testnet', ?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?)
       `).run(
         transactionId,
         attempt.fingerprint,
@@ -229,6 +262,7 @@ export class ProviderStore {
         token,
         now + PAYMENT_LEASE_MS,
         attempt.transactionValidUntil,
+        canonicalJson(attempt.policy),
         now,
         now,
       );

@@ -104,6 +104,7 @@ variables; the template lists them under "Paid scan provider":
 | `PROVIDER_ID` | Provider identity written into every `ScanReport.providerId` |
 | `PROVIDER_A_PRICE_TINYBAR` | Exact HBAR price of one scan, decimal tinybars, nonzero |
 | `RESOURCE_SERVER_PUBLIC_URL` | Public base URL without trailing slash; `/scan` is appended and must equal the signer's `scanUrl` |
+| `RESOURCE_SERVER_HOST` | Interface the listener binds to; defaults to `127.0.0.1`. Set `0.0.0.0` (or a specific interface) when the public URL is served from another host or a published container port; a non-loopback public URL must then be HTTPS |
 | `RESOURCE_SERVER_DATABASE_URL` | SQLite file for paid-scan claims, reports, settlements and the callback outbox; one per provider |
 | `CALLBACK_URL` | Deployment-configured orchestrator `POST /callbacks/mission-complete`; never caller-supplied |
 | `CALLBACK_SECRET` | Unpadded base64url encoding of exactly 32 random bytes; distinct per provider and shared only with the callback verifiers |

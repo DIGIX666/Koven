@@ -23,9 +23,16 @@ function seedCallback(store: ProviderStore, now: number): void {
   store.database.prepare(`
     INSERT INTO provider_paid_scans (
       network, transaction_id, fingerprint, request_json, payment_payload_json,
-      status, settlement_attempted, valid_until, created_at, updated_at
-    ) VALUES ('hedera:testnet', ?, ?, '{}', '{}', 'completed', 1, ?, ?, ?)
-  `).run(transactionId, "b".repeat(64), now + 120_000, now, now);
+      status, settlement_attempted, valid_until, policy_json, created_at, updated_at
+    ) VALUES ('hedera:testnet', ?, ?, '{}', '{}', 'completed', 1, ?, ?, ?, ?)
+  `).run(transactionId, "b".repeat(64), now + 120_000, JSON.stringify({
+    providerAccountId: "0.0.2001",
+    scanUrl: "http://127.0.0.1:3003/scan",
+    amountTinybar: "1000000",
+    network: "hedera:testnet",
+    asset: "0.0.0",
+    feePayerAccountId: "0.0.3001",
+  }), now, now);
   store.database.prepare(`
     INSERT INTO provider_callback_jobs (
       idempotency_key, network, transaction_id, body, body_sha256, status,

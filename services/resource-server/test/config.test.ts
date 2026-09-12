@@ -35,6 +35,16 @@ describe("loadPaidScanEnvironment", () => {
     expect(config.signerPublicKeys).toEqual({ "0.0.1001": signer.publicKey.toStringRaw() });
     expect(config).not.toHaveProperty("privateKey");
     expect(Object.isFrozen(config)).toBe(true);
+    expect(config.host).toBe("127.0.0.1");
+  });
+
+  it("binds to the configured interface and rejects hosts carrying a scheme, port or path", () => {
+    expect(loadPaidScanEnvironment({ ...valid, RESOURCE_SERVER_HOST: "0.0.0.0" }).host).toBe("0.0.0.0");
+    expect(loadPaidScanEnvironment({ ...valid, RESOURCE_SERVER_HOST: "::" }).host).toBe("::");
+    expect(loadPaidScanEnvironment({ ...valid, RESOURCE_SERVER_HOST: "provider.internal" }).host).toBe("provider.internal");
+    for (const host of ["http://0.0.0.0", "0.0.0.0:3003", "localhost/scan", " "]) {
+      expect(() => loadPaidScanEnvironment({ ...valid, RESOURCE_SERVER_HOST: host })).toThrowError(/RESOURCE_SERVER_HOST/);
+    }
   });
 
   it("rejects unsafe URLs, zero prices, malformed keys and short callback secrets", () => {

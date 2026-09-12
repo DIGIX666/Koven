@@ -159,12 +159,11 @@ function safePaymentResponseHeaders(
 function assertSettlementResult(
   result: SettleResponse,
   attempt: ValidatedPaymentAttempt,
-  policy: PaymentAuthorizationPolicy,
 ): void {
   if (
     !result.success
     || result.transaction !== attempt.authorization.transactionId
-    || result.network !== policy.network
+    || result.network !== attempt.policy.network
     || result.payer !== attempt.authorization.borrowerAccountId
     || (result.amount !== undefined && result.amount !== attempt.authorization.amountTinybar)
   ) {
@@ -264,8 +263,8 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
       confirmed = await options.settlementConfirmer.confirm({
         transactionId: payment.transactionId,
         payerAccountId: payment.request.paymentAuthorization.borrowerAccountId,
-        providerAccountId: options.providerAccountId,
-        amountTinybar: options.amountTinybar,
+        providerAccountId: payment.policy.providerAccountId,
+        amountTinybar: payment.policy.amountTinybar,
       });
     } catch (error) {
       if (error instanceof SettlementConfirmationError) {
@@ -360,7 +359,13 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
         paymentHeader,
         authorizationPolicy,
         now(),
-        { allowExpired: true },
+        {
+          allowExpired: true,
+          storedPolicy: (transactionId, fingerprint) => {
+            const existing = options.store.getPayment(transactionId);
+            return existing?.fingerprint === fingerprint ? existing.policy : undefined;
+          },
+        },
       );
       if (attempt.authorizationExpired) {
         const existing = options.store.getPayment(attempt.authorization.transactionId);
@@ -450,7 +455,7 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
         );
       }
       const { headers, requirements: _requirements, ...settlement } = settled;
-      assertSettlementResult(settlement, attempt, authorizationPolicy);
+      assertSettlementResult(settlement, attempt);
       const responseHeaders = safePaymentResponseHeaders(headers, settlement);
       options.store.saveSettlement(attempt.authorization.transactionId, settlement, responseHeaders, now().getTime());
 

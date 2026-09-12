@@ -43,6 +43,8 @@ const scanRequest: ScanRequest = {
 };
 
 class FakeFacilitator implements FacilitatorClient {
+  constructor(readonly feePayer = feePayerAccountId) {}
+
   readonly verify = vi.fn(async (payload: PaymentPayload, _requirements: PaymentRequirements): Promise<VerifyResponse> => ({
     isValid: true,
     payer: consumerAccountId,
@@ -63,7 +65,7 @@ class FakeFacilitator implements FacilitatorClient {
         x402Version: 2,
         scheme: "exact",
         network: "hedera:testnet",
-        extra: { feePayer: feePayerAccountId },
+        extra: { feePayer: this.feePayer },
       }],
       extensions: [],
       signers: {},
@@ -220,8 +222,9 @@ async function paidRequest(
   harness: Harness,
   request: ScanRequest = scanRequest,
   expiresAt?: string,
+  adjustRequirements: (requirements: PaymentRequirements) => PaymentRequirements = requirements => requirements,
 ) {
-  const requirements = await challenge(harness.baseUrl);
+  const requirements = adjustRequirements(await challenge(harness.baseUrl));
   const payerKey = PrivateKey.generateECDSA();
   const clientSigner = createClientHederaSigner(consumerAccountId, payerKey, { network: "hedera:testnet" });
   const partial = await new ExactHederaScheme(clientSigner).createPaymentPayload(2, requirements);
@@ -782,6 +785,109 @@ describe("paid scan server", () => {
     currentTime = new Date(currentTime.getTime() + 300_001);
     expect((await invoke()).status).toBe(200);
     expect(harness.engine.scan).toHaveBeenCalledTimes(1);
+    expect(harness.facilitator.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps serving a stored payment after the facilitator rotates its fee payer", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "koven-paid-scan-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "provider.db");
+    const signerPrivateKey = PrivateKey.generateECDSA();
+    const firstStore = new ProviderStore(databasePath);
+    const first = await createHarness({
+      settlementConfirmer: { confirm: vi.fn(async () => {
+        throw new SettlementConfirmationError("settlement_unconfirmed", 503, "Settlement is not yet visible");
+      }) },
+    }, { signerPrivateKey, store: firstStore });
+    const paid = await paidRequest(first);
+    const transactionId = paid.body.paymentAuthorization.transactionId;
+    const firstResponse = await fetch(`${first.baseUrl}/scan`, {
+      method: "POST",
+      headers: paid.headers,
+      body: JSON.stringify(paid.body),
+    });
+    expect(firstResponse.status).toBe(200);
+    const report = await firstResponse.json();
+    expect(firstStore.getPayment(transactionId)?.policy.feePayerAccountId).toBe(feePayerAccountId);
+
+    await new Promise<void>(resolve => first.server.close(() => resolve()));
+    servers.splice(servers.indexOf(first.server), 1);
+    stores.splice(stores.indexOf(firstStore), 1);
+    firstStore.close();
+    const rotatedFeePayer = "0.0.3002";
+    const reopenedStore = new ProviderStore(databasePath);
+    const second = await createHarness({}, {
+      signerPrivateKey,
+      store: reopenedStore,
+      facilitator: new FakeFacilitator(rotatedFeePayer),
+    });
+
+    // The byte-identical retry is bound to the terms it was accepted under.
+    const retry = await fetch(`${second.baseUrl}/scan`, {
+      method: "POST",
+      headers: paid.headers,
+      body: JSON.stringify(paid.body),
+    });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(report);
+    expect(reopenedStore.getPayment(transactionId)?.status).toBe("completed");
+    expect(second.facilitator.verify).not.toHaveBeenCalled();
+    expect(second.facilitator.settle).not.toHaveBeenCalled();
+    expect(second.engine.scan).not.toHaveBeenCalled();
+    expect(second.confirmer.confirm).toHaveBeenCalledWith(expect.objectContaining({
+      providerAccountId,
+      amountTinybar,
+    }));
+
+    // A new payment must use the fee payer currently advertised by the facilitator.
+    const stale = await paidRequest(second, scanRequest, undefined, requirements => ({
+      ...requirements,
+      extra: { ...requirements.extra, feePayer: feePayerAccountId },
+    }));
+    const staleResponse = await fetch(`${second.baseUrl}/scan`, {
+      method: "POST",
+      headers: stale.headers,
+      body: JSON.stringify(stale.body),
+    });
+    expect(staleResponse.status).toBe(403);
+    expect(await staleResponse.json()).toMatchObject({ code: "payment_authorization_mismatch" });
+
+    const fresh = await paidRequest(second);
+    expect(fresh.paymentPayload.accepted.extra?.feePayer).toBe(rotatedFeePayer);
+    const freshResponse = await fetch(`${second.baseUrl}/scan`, {
+      method: "POST",
+      headers: fresh.headers,
+      body: JSON.stringify(fresh.body),
+    });
+    expect(freshResponse.status).toBe(200);
+    expect(reopenedStore.getPayment(fresh.body.paymentAuthorization.transactionId)?.policy.feePayerAccountId)
+      .toBe(rotatedFeePayer);
+    expect(second.facilitator.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a stored snapshot validate a different payment for the same transaction", async () => {
+    const harness = await createHarness();
+    const paid = await paidRequest(harness);
+    expect((await fetch(`${harness.baseUrl}/scan`, {
+      method: "POST",
+      headers: paid.headers,
+      body: JSON.stringify(paid.body),
+    })).status).toBe(200);
+
+    const otherSource = "pragma solidity ^0.8.24; contract Other {}";
+    const conflicting = authorizePayment(harness, {
+      missionId: "mission-other",
+      targetRef: "Other.sol",
+      source: otherSource,
+      targetSha256: hashSource(otherSource),
+    }, paid.paymentPayload);
+    const response = await fetch(`${harness.baseUrl}/scan`, {
+      method: "POST",
+      headers: conflicting.headers,
+      body: JSON.stringify(conflicting.body),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "idempotency_conflict" });
     expect(harness.facilitator.settle).toHaveBeenCalledTimes(1);
   });
 

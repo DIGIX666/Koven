@@ -19,8 +19,12 @@ export interface PaidScanEnvironment {
   readonly callbackUrl: string;
   readonly callbackSecret: string;
   readonly databasePath: string;
+  /** Interface the HTTP listener binds to; loopback by default, `0.0.0.0` for cross-host deployments. */
+  readonly host: string;
   readonly port: number;
 }
+
+const DEFAULT_HOST = "127.0.0.1";
 
 function required(source: EnvironmentSource, key: string, invalidKeys: string[]): string {
   const value = source[key];
@@ -66,6 +70,14 @@ function trustedServiceUrl(value: string): string {
   return value;
 }
 
+/** A bare hostname, IPv4 or IPv6 literal for `listen()`; no scheme, port or path. */
+function bindHost(value: string): string {
+  const hostname = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/.test(value);
+  const ipv6 = /^[0-9A-Fa-f:]+$/.test(value) && value.includes(":");
+  if (!hostname && !ipv6) throw new Error("Invalid bind host");
+  return value;
+}
+
 function trustedOrigin(value: string): string {
   trustedServiceUrl(value);
   if (new URL(value).pathname !== "/") throw new Error("Expected a service origin");
@@ -85,6 +97,7 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
   const mirrorNodeUrl = required(source, "HEDERA_MIRROR_NODE_URL", invalidKeys);
   const consumerAccountValue = required(source, "CONSUMER_ACCOUNT_ID", invalidKeys);
   const consumerPublicKey = required(source, "CONSUMER_PUBLIC_KEY", invalidKeys);
+  const hostValue = source.RESOURCE_SERVER_HOST || DEFAULT_HOST;
 
   const providerId = validate("PROVIDER_ID", providerIdValue, value => Id.parse(value), invalidKeys);
   const amountTinybar = validate("PROVIDER_A_PRICE_TINYBAR", amountValue, value => {
@@ -99,9 +112,10 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
   const consumerAccountId = validate("CONSUMER_ACCOUNT_ID", consumerAccountValue, value => AccountId.parse(value), invalidKeys);
   validate("CONSUMER_PUBLIC_KEY", consumerPublicKey, value => PublicKey.fromStringECDSA(value), invalidKeys);
   validate("HEDERA_MIRROR_NODE_URL", mirrorNodeUrl, trustedOrigin, invalidKeys);
+  const host = validate("RESOURCE_SERVER_HOST", hostValue, bindHost, invalidKeys);
 
   if (invalidKeys.length > 0 || !providerId || !amountTinybar || !publicUrl
-    || !facilitatorUrl || !callbackUrl || !consumerAccountId) {
+    || !facilitatorUrl || !callbackUrl || !consumerAccountId || !host) {
     throw new EnvironmentValidationError([...new Set(invalidKeys)].sort());
   }
 
@@ -118,6 +132,7 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
     callbackUrl,
     callbackSecret,
     databasePath,
+    host,
     port: base.port,
   });
 }

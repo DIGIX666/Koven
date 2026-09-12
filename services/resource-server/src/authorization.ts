@@ -42,13 +42,22 @@ export class PaymentAuthorizationError extends Error {
   }
 }
 
-export interface PaymentAuthorizationPolicy {
+/**
+ * Provider payment terms a paid request is bound to. Persisted with each
+ * durable claim so that identical retries keep validating against the terms
+ * that were current when the payment was first accepted, even after the
+ * facilitator rotates its fee payer or the provider is reconfigured.
+ */
+export interface PaymentPolicySnapshot {
   readonly providerAccountId: string;
   readonly scanUrl: string;
   readonly amountTinybar: string;
   readonly network: "hedera:testnet";
   readonly asset: "0.0.0";
   readonly feePayerAccountId: string;
+}
+
+export interface PaymentAuthorizationPolicy extends PaymentPolicySnapshot {
   readonly signerPublicKeys: Readonly<Record<string, string>>;
 }
 
@@ -61,10 +70,29 @@ export interface ValidatedPaymentAttempt {
   readonly authorizationExpired: boolean;
   /** Unix milliseconds of the transaction's valid start plus its valid duration. */
   readonly transactionValidUntil: number;
+  /** The terms this attempt was bound to: a stored snapshot for retries, else the current policy. */
+  readonly policy: PaymentPolicySnapshot;
 }
 
 export interface PaymentAuthorizationValidationOptions {
   readonly allowExpired?: boolean;
+  /**
+   * Returns the policy snapshot persisted for an existing claim of this
+   * transaction when its fingerprint matches, so a byte-identical retry is
+   * validated against the terms it was accepted under.
+   */
+  readonly storedPolicy?: (transactionId: string, fingerprint: string) => PaymentPolicySnapshot | undefined;
+}
+
+export function policySnapshot(policy: PaymentAuthorizationPolicy): PaymentPolicySnapshot {
+  return {
+    providerAccountId: policy.providerAccountId,
+    scanUrl: policy.scanUrl,
+    amountTinybar: policy.amountTinybar,
+    network: policy.network,
+    asset: policy.asset,
+    feePayerAccountId: policy.feePayerAccountId,
+  };
 }
 
 export function authorizationSigningPayload(authorization: WireAuthorization): string {
@@ -112,7 +140,7 @@ function assertPolicyBinding(
   request: PaidScanRequest,
   authorization: WireAuthorization,
   payload: PaymentPayload,
-  policy: PaymentAuthorizationPolicy,
+  policy: PaymentPolicySnapshot,
 ): void {
   if (
     request.missionId !== authorization.missionId
@@ -154,7 +182,7 @@ function transactionValidUntil(bytes: Buffer, transactionId: string): number {
 function assertTransactionBinding(
   transactionBase64: string,
   authorization: WireAuthorization,
-  policy: PaymentAuthorizationPolicy,
+  policy: PaymentPolicySnapshot,
 ): number {
   const bytes = Buffer.from(transactionBase64, "base64");
   if (bytes.toString("base64") !== transactionBase64) invalid("Hedera transaction encoding is not canonical base64");
@@ -217,17 +245,21 @@ export function validatePaidPaymentAttempt(
     invalid("PAYMENT-SIGNATURE header is malformed");
   }
 
-  assertPolicyBinding(parsedRequest.data, authorization, paymentPayload, policy);
+  const fingerprint = sha256Hex(canonicalJson({ request: parsedRequest.data, paymentPayload }));
+  const boundPolicy = options.storedPolicy?.(authorization.transactionId, fingerprint) ?? policySnapshot(policy);
+
+  assertPolicyBinding(parsedRequest.data, authorization, paymentPayload, boundPolicy);
   const transactionBase64 = transactionFromPayload(paymentPayload);
-  const validUntil = assertTransactionBinding(transactionBase64, authorization, policy);
+  const validUntil = assertTransactionBinding(transactionBase64, authorization, boundPolicy);
 
   return {
     request: parsedRequest.data,
     authorization,
     paymentPayload,
     transactionBase64,
-    fingerprint: sha256Hex(canonicalJson({ request: parsedRequest.data, paymentPayload })),
+    fingerprint,
     authorizationExpired,
     transactionValidUntil: validUntil,
+    policy: boundPolicy,
   };
 }

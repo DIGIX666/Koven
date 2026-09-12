@@ -7,7 +7,7 @@ const logger = createLogger({ name: "resource-server" });
 const runtime = await createPaidScanRuntime();
 const listener = await runtime.listen();
 
-logger.info({ port: runtime.port }, "Paid scan provider listening");
+logger.info({ host: runtime.host, port: runtime.port }, "Paid scan provider listening");
 
 const shutdown = (signal: NodeJS.Signals): void => {
   logger.info({ signal }, "Paid scan provider stopping");
