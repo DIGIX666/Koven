@@ -5,7 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@hiero-ledger/sdk": "2.85.0"
+    "@hiero-ledger/sdk": "2.86.2"
   },
   "devDependencies": {
     "vitest": "2.1.9"

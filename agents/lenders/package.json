@@ -3,6 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@hashgraph/hedera-agent-kit": "4.1.0",
+    "@koven/credit-protocol": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/hedera": "workspace:*",
+    "@koven/persistence": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "express": "5.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
