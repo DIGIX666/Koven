@@ -7,6 +7,7 @@ import {
   createMission,
   getMission,
   reserveSpending,
+  saveMissionPolicy,
   updateLoanState,
   type KovenDatabase,
   type PersistedMission,
@@ -15,7 +16,6 @@ import type { HttpRequest } from "@koven/schemas";
 import type { X402Client } from "@koven/x402";
 import type { ClientHederaSigner } from "@x402/hedera";
 
-import type { CompletionHandler } from "../callbacks/index.js";
 import { hashBase64, hashBytes, hashCanonicalJson } from "../canonical.js";
 import type { MissionStateMachine } from "../state/index.js";
 
@@ -26,7 +26,6 @@ class PolicyRejectedError extends Error {}
 export interface MissionWorkflowOptions {
   database: KovenDatabase;
   stateMachine: MissionStateMachine;
-  completionHandler: CompletionHandler;
   hedera: HederaAdapter;
   signer: ClientHederaSigner;
   x402Client: X402Client;
@@ -39,7 +38,7 @@ export interface MissionWorkflowOptions {
   loanFeeTinybar?: bigint;
 }
 
-/** Deterministic Track A workflow. Agent reasoning stays outside this sequence. */
+/** Deterministic mission workflow. Agent reasoning stays outside this sequence. */
 export class MissionWorkflow {
   private readonly now: () => string;
   private readonly missionId: () => string;
@@ -94,16 +93,27 @@ export class MissionWorkflow {
       }
 
       const provider = selected.provider;
-      const balance = await this.options.hedera.getBalanceTinybar(this.options.borrowerAccountId);
-      const requiredCredit = checkBudget(balance, provider.priceTinybar);
       if (provider.priceTinybar > BigInt(request.maxBudgetTinybar)) {
         await move("payment-preparation", "providers-ranked", { ranked });
         throw new PolicyRejectedError("Selected provider exceeds the mission budget");
       }
+      saveMissionPolicy(this.options.database, {
+        missionId: id,
+        borrowerAccountId: this.options.borrowerAccountId,
+        spendingCapTinybar: BigInt(request.maxBudgetTinybar),
+        sessionId: `session-${id}`,
+        sessionCapTinybar: BigInt(request.maxBudgetTinybar),
+        targetSha256,
+        provider,
+        approvedRecipientsRoot: this.options.approvedRecipientsRoot,
+        createdAt,
+      });
+      const balance = await this.options.hedera.getBalanceTinybar(this.options.borrowerAccountId);
+      const requiredCredit = checkBudget(balance, provider.priceTinybar);
 
       if (requiredCredit > 0n) {
         await move("credit-requested", "credit-requested", { principalTinybar: requiredCredit });
-        // Track A keeps credit negotiation inline; F09 replaces it with the real credit service.
+        // Credit negotiation remains inline until runtime composition delegates it to the consumer service.
         const offers = requestCredit(
           id,
           requiredCredit,
@@ -137,7 +147,7 @@ export class MissionWorkflow {
       const signedTransaction = await this.options.signer
         .createPartiallySignedTransferTransaction(challenge.requirements);
       const transactionSha256 = hashBase64(signedTransaction);
-      // Track A reserves signer-owned state locally; F09 moves this behind the signer boundary.
+      // This local reservation is replaced by the signer-owned authorization in runtime composition.
       reserveSpending(this.options.database, {
         missionId: id,
         nonce: "1",
@@ -145,7 +155,7 @@ export class MissionWorkflow {
         amountTinybar,
         consumedAt: this.now(),
       });
-      // Track A builds a placeholder authorization; F09 consumes AuthorizeResponse remotely.
+      // This placeholder is replaced by the remote signer's authorization in runtime composition.
       const authorization = createAuthorization(
         id,
         targetSha256,
@@ -174,34 +184,6 @@ export class MissionWorkflow {
         providerId: provider.id,
         reportSha256: paid.report.reportSha256,
       });
-
-      const callback = {
-        outcome: {
-          missionId: id,
-          delivered: true as const,
-          reportSha256: paid.report.reportSha256,
-          settlementTxId: paid.receipt.transactionId,
-          observedAt: this.now(),
-        },
-        report: paid.report,
-      };
-      const callbackTimestamp = String(Math.floor(Date.parse(this.now()) / 1000));
-      await this.options.completionHandler.receive(callback, {
-        idempotencyKey: `mission-complete:${id}:${paid.report.reportSha256}`,
-        timestamp: callbackTimestamp,
-        signature: hashCanonicalJson(callback),
-      });
-      state = "completed";
-
-      if (loan === undefined) {
-        await move("closed", "mission-completed", { reportSha256: paid.report.reportSha256 });
-      } else {
-        await move("repayment-pending", "mission-completed", { loanId: loan.id });
-        // Track A repays inline; F09 delegates this to the restricted signer service.
-        const repaymentTxId = await this.repay(loan);
-        await move("repaid", "repayment-settled", { loanId: loan.id, repaymentTxId });
-        await move("closed", "repayment-settled", { loanId: loan.id });
-      }
     } catch (error) {
       await this.finishFailure(id, state, loan, move, error);
     }
@@ -235,19 +217,6 @@ export class MissionWorkflow {
     return { ...loan, state: "funded", fundingTxId: funding.transactionId };
   }
 
-  private async repay(loan: Loan): Promise<string> {
-    const repayment = await this.options.hedera.transferHbar({
-      from: this.options.borrowerAccountId,
-      to: loan.lenderAccountId,
-      amountTinybar: loan.principalTinybar + loan.feeTinybar,
-      memo: `repay:${loan.id}`,
-    });
-    updateLoanState(this.options.database, loan.id, "funded", "repaid", {
-      repaymentTxId: repayment.transactionId,
-    });
-    return repayment.transactionId;
-  }
-
   private async finishFailure(
     missionId: string,
     initialState: MissionState,
@@ -269,9 +238,6 @@ export class MissionWorkflow {
 
     if (error instanceof PolicyRejectedError && state === "payment-preparation") {
       await moveFailure("policy-rejected", "payment-rejected");
-    } else if (state === "repayment-pending") {
-      await moveFailure("defaulted", "mission-failed");
-      return;
     } else if ((ALLOWED_TRANSITIONS[state] as readonly MissionState[]).includes("failed")) {
       await moveFailure("failed", "mission-failed");
     }
@@ -286,14 +252,7 @@ export class MissionWorkflow {
       return;
     }
 
-    await moveFailure("repayment-pending", "mission-failed");
-    try {
-      const repaymentTxId = await this.repay(loan);
-      await move("repaid", "repayment-settled", { loanId: loan.id, repaymentTxId });
-      await move("closed", "repayment-settled", { loanId: loan.id });
-    } catch {
-      await moveFailure("defaulted", "mission-failed");
-    }
+    await moveFailure("defaulted", "mission-failed");
 
     if (getMission(this.options.database, missionId) === undefined) {
       throw new Error(`Mission disappeared during recovery: ${missionId}`);
@@ -305,7 +264,7 @@ export function rankProviders(
   providers: readonly Provider[],
   maxBudgetTinybar: bigint,
 ): RankedProvider[] {
-  // B4.1 adds capability filtering and the final scoring policy.
+  // Capability filtering and the final scoring policy are added with provider competition.
   const denominator = Number(maxBudgetTinybar === 0n ? 1n : maxBudgetTinybar);
   return providers.map(provider => {
     const price = 1 - Math.min(Number(provider.priceTinybar) / denominator, 1);

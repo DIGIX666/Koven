@@ -74,6 +74,19 @@ export function getLoan(database: KovenDatabase, id: string): Loan | undefined {
   return loan;
 }
 
+export function getLoanByMission(database: KovenDatabase, missionId: string): Loan | undefined {
+  const rows = database.prepare(`
+    SELECT id FROM loans WHERE mission_id = ? ORDER BY id LIMIT 2
+  `).all(missionId) as { id: string }[];
+  if (rows.length > 1) {
+    throw new PersistenceConflictError(
+      PersistenceConflict.LOAN_REGISTRATION_CONFLICT,
+      `Mission has more than one loan: ${missionId}`,
+    );
+  }
+  return rows[0] === undefined ? undefined : getLoan(database, rows[0].id);
+}
+
 export function updateLoanState(
   database: KovenDatabase,
   id: string,

@@ -21,6 +21,6 @@
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/orchestrator --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/orchestrator"
   }
 }
