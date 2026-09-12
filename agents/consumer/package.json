@@ -3,10 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@koven/credit-protocol": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/hedera": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "@koven/x402": "workspace:*"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/consumer-agent --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/consumer-agent"
   }
 }

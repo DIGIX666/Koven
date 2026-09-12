@@ -1,6 +1,3 @@
-/** Consumer-agent entry point for mission, provider, and credit decisions. */
-export const consumerAgent = {
-  name: "koven-consumer",
-  status: "scaffolded",
-} as const;
-
+export * from "./credit.js";
+export * from "./mission.js";
+export * from "./payment.js";

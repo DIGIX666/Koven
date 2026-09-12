@@ -51,7 +51,23 @@ importers:
         specifier: 2.1.9
         version: 2.1.9(@types/node@22.18.6)(terser@5.51.2)
 
-  agents/consumer: {}
+  agents/consumer:
+    dependencies:
+      '@koven/credit-protocol':
+        specifier: workspace:*
+        version: link:../../packages/credit-protocol
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../../packages/hedera
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
 
   agents/lenders:
     dependencies:
