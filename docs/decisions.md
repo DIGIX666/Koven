@@ -23,7 +23,7 @@ review shared contracts before merge.
 | Discovery and reputation | Internal directory; deterministic ranking from local lifecycle events. M2/M3 use one configured provider; M4 introduces competition. | Keeps M3 independent of dynamic selection while retaining the M4 objective. |
 | Selection | Share filtering, scoring and tie-breaking primitives; keep lender/provider policies distinct. | Different domains have different risk criteria. |
 | Negotiation | Internal HTTP API; A2A/ACP deferred. | External negotiation protocols add no MVP value with controlled agents. |
-| ZK | Circom, snarkjs and Groth16; mandatory signer and independent lender verification in M3. | Real-circuit measurements remain A1.4's job. On-chain verification is deferred unless it gates settlement. |
+| ZK | Circom, SnarkJS and Groth16; mandatory restricted-signer and independent-lender verification. No on-chain verifier for the MVP. | The measured verification cost is small, while a contract outside the Hedera `exact` settlement path cannot prevent an invalid payment. |
 | Artifacts | One official phase-2 release; immutable files, reviewed manifest and identical independently pinned verification keys. | New contributions change keys. Normal builds verify/download artifacts instead of regenerating canonical keys. Phase-2 contributor honesty remains an assumption. |
 | Nonces and budgets | Canonical 248-bit nonce, unique `(mission_id, nonce)` and unique commitment; reserve budgets and consume nonce atomically before releasing signed bytes. | A new challenge must not make a reused nonce acceptable. Signer enforces mission and session caps. |
 | Repayment | Immediate command derived from the accepted funded loan, with stable transaction ID and durable reconciliation. | Callback duplication must not cause a second transfer. Insufficient funds enter recovery/default; completion does not create repayment funds. |
@@ -31,6 +31,26 @@ review shared contracts before merge.
 | Scope | No independent validator, decentralized dispute/default resolution, mainnet or new facilitator. ERC-8004/HCS-14 identity is excluded. | Keep the MVP focused on the credit/payment lifecycle. |
 | Package naming | Existing packages remain `@koven/*`. Protocol signature domains use `koven:*` and the circuit identity is `koven-policy-v1`. | Keep package names, signed-message domains and circuit identity consistent before the first implementation release. |
 | Delivery | One functional issue, branch and PR; multiple atomic commits allowed. F01 covers S0.0/S0.1. | Stable task IDs remain references; Git operations are handled by the developer. |
+
+## ZK verification placement
+
+- The restricted signer verifies each proof before signing a payment and compares
+  its public commitment, recipient root and cap with trusted mission state.
+- The lender verifies the same proof independently, using its own pinned
+  verification-key bytes and trusted copy of the mission policy. It does not
+  inherit the signer's verification result.
+- The MVP has no on-chain verifier. Hedera `exact` settlement is submitted as a
+  transfer by the facilitator and is not gated by a Koven contract. An off-path
+  verifier would add cost and complexity without enforcing settlement.
+- On-chain verification is reconsidered only if a future settlement contract can
+  reject invalid proofs before value moves, or if a concrete public-audit use
+  case justifies publishing proofs.
+
+The reproducible Policy V1 benchmark records ten post-warm-up samples on the
+official artifacts. Median verification was 5.346 ms at the restricted signer
+and 5.226 ms at the independent lender on the recorded development machine; see
+[the feasibility measurements](zk-spike.md#measurements) for the environment,
+ranges and measurement method.
 
 ## F03 implementation decisions
 

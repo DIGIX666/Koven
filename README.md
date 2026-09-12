@@ -52,6 +52,13 @@ Full protocol flow, state machine, and ZK proof statement: [`docs/protocol.md`](
 
 - Node.js 20 or later
 - pnpm, available directly or through Corepack
+- Circom 2.2.3 for circuit compilation and artifact verification
+
+Install Circom from the
+[official v2.2.3 release](https://github.com/iden3/circom/releases/tag/v2.2.3)
+(a published binary where available, or the tagged source), then confirm that
+`circom --version` prints exactly `circom compiler 2.2.3`. Koven rejects other
+compiler versions.
 
 ### Setup
 
@@ -75,24 +82,26 @@ credentials for local development.
 | `pnpm build` | Compile all workspace sources and tool configurations using TypeScript project references |
 | `pnpm lint` | Run ESLint across sources, tests and tooling; warnings fail the command |
 | `pnpm typecheck` | Check tooling and every workspace, including contract type conformance |
-| `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered |
+| `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered. Runs right after install, no artifacts needed |
 | `pnpm test:e2e` | Run the E2E test project (currently no tests) |
-| `pnpm zk:build` | Build the ZK workspace's TypeScript; circuit compilation will be added in F04 |
-| `pnpm zk:test` | Run the ZK test project (currently no tests) |
+| `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
+| `pnpm zk:test` | Run the Policy V1 feasibility benchmark on the verified official artifacts; requires `pnpm zk:build` first |
 
 Use the pinned pnpm version from `packageManager` (Corepack), then run:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
+pnpm zk:build
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm zk:test
 ```
 
 Each workspace exposes `build`, `lint`, `typecheck` and `test`, for example
 `pnpm --filter @koven/schemas test`. Vitest projects extend the shared root
-configuration and are discovered by `vitest.workspace.ts`. The 28 F01 contract
+configuration and are discovered by `vitest.workspace.ts`. The 28 shared contract
 checks run under Vitest; their assertions and compile-time conformance are preserved.
 Scaffold-only projects explicitly allow an empty test suite at package level;
 this does not mean their features are implemented. Remove `--passWithNoTests`
@@ -109,7 +118,7 @@ E2E scenario belong to later tasks. This build does not compile Circom artifacts
 When adding a workspace, add its build configuration to the root `tsconfig.json`.
 When adding a workspace dependency, also reference its `tsconfig.build.json` from
 the consumer's build configuration. Runtime services and testnet access are not
-needed for the B0.4 checks.
+needed for the workspace checks.
 
 ## Documentation
 
@@ -144,7 +153,7 @@ This layout is planned and may evolve during implementation.
 | Hedera Agent Kit | Balance queries, transfers, HCS actions |
 | x402 v2 | HTTP-native payment negotiation |
 | Blocky402 | Required facilitator for Hedera payment settlement |
-| Circom / SnarkJS | Candidate stack for the policy circuit |
+| Circom / SnarkJS | Policy-circuit compilation, proving and verification |
 
 ## References
 
