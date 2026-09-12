@@ -45,6 +45,8 @@ class FakeFundingGateway implements FundingGateway {
   reconciliations = 0;
   failBeforePrepare = false;
   failAfterPrepare = false;
+  preparedTransactionId = transactionId;
+  returnedTransactionId = transactionId;
   reconciliation: "confirmed" | "pending" | "failed" = "confirmed";
 
   async transfer(input: FundingTransfer): Promise<{ transactionId: string }> {
@@ -55,9 +57,9 @@ class FakeFundingGateway implements FundingGateway {
       memo: input.memo,
     });
     if (this.failBeforePrepare) throw new Error("funding unavailable");
-    input.onPrepared(transactionId);
+    input.onPrepared(this.preparedTransactionId);
     if (this.failAfterPrepare) throw new Error("submission timed out");
-    return { transactionId };
+    return { transactionId: this.returnedTransactionId };
   }
 
   async reconcile(): Promise<"confirmed" | "pending" | "failed"> {
@@ -370,6 +372,31 @@ describe("first conservative lender", () => {
     expect(test.registration.requests).toHaveLength(1);
   });
 
+  it("persists the replacement transaction ID returned after an SDK retry", async () => {
+    const gateway = new FakeFundingGateway();
+    gateway.preparedTransactionId = "0.0.20@1789128000.000000001";
+    gateway.returnedTransactionId = "0.0.20@1789128001.000000002";
+    const test = runtime({ gateway });
+    const baseUrl = await listen(test.app);
+    await registerPolicy(baseUrl);
+    const quoted = await quote(baseUrl);
+    const offer = offerDomain(CreditOfferSchema.parse(await quoted.response.json()));
+
+    const response = await postAcceptance(
+      baseUrl,
+      acceptanceWire(quoted.request, offer),
+    );
+
+    expect(response.status).toBe(200);
+    expect(CreditAcceptResponseSchema.parse(await response.json())).toEqual({
+      fundingTxId: gateway.returnedTransactionId,
+    });
+    expect(test.store.getFundingByOffer(offer.id)).toMatchObject({
+      transactionId: gateway.returnedTransactionId,
+      status: "registered",
+    });
+  });
+
   it("serializes concurrent acceptance attempts before preparing a transfer", async () => {
     const gateway = new BlockingFundingGateway();
     const test = runtime({ gateway });
@@ -478,6 +505,22 @@ describe("first conservative lender", () => {
 
     expect(response.status).toBe(413);
     expect(ErrorResponseSchema.parse(await response.json()).code).toBe("source_too_large");
+  });
+
+  it("returns request_invalid for malformed JSON", async () => {
+    const test = runtime();
+    const baseUrl = await listen(test.app);
+    const response = await fetch(`${baseUrl}/credit/quote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+
+    expect(response.status).toBe(400);
+    expect(ErrorResponseSchema.parse(await response.json())).toEqual({
+      code: "request_invalid",
+      detail: "Request body contains malformed JSON",
+    });
   });
 
   it("reconciles a persisted uncertain transaction after restart without funding twice", async () => {

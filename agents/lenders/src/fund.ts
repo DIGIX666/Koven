@@ -296,22 +296,38 @@ export class FundingService {
         );
       }
       try {
+        let preparedTransactionId: string | undefined;
         const result = await this.options.gateway.transfer({
           ...expected,
           memo: `fund:${funding.id}`,
-          onPrepared: transactionId => this.options.store.setFundingTransaction(
+          onPrepared: transactionId => {
+            this.options.store.setFundingTransaction(
+              funding.id,
+              submissionToken,
+              transactionId,
+              this.now(),
+            );
+            preparedTransactionId = transactionId;
+          },
+        });
+        if (preparedTransactionId !== undefined
+          && preparedTransactionId !== result.transactionId) {
+          // Hedera may assign a new ID when retrying a transaction rejected at consensus.
+          this.options.store.replaceFundingTransaction(
             funding.id,
             submissionToken,
-            transactionId,
+            preparedTransactionId,
+            result.transactionId,
             this.now(),
-          ),
-        });
-        this.options.store.setFundingTransaction(
-          funding.id,
-          submissionToken,
-          result.transactionId,
-          this.now(),
-        );
+          );
+        } else {
+          this.options.store.setFundingTransaction(
+            funding.id,
+            submissionToken,
+            result.transactionId,
+            this.now(),
+          );
+        }
         this.options.store.markFundingConfirmed(funding.id, result.transactionId, this.now());
         funding = { ...funding, transactionId: result.transactionId, status: "confirmed" };
       } catch (error) {

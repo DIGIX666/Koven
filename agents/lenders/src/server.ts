@@ -118,6 +118,10 @@ const isBodyTooLarge = (error: unknown): boolean => error instanceof Error
   && "type" in error
   && error.type === "entity.too.large";
 
+const isMalformedJson = (error: unknown): boolean => error instanceof SyntaxError
+  && "type" in error
+  && error.type === "entity.parse.failed";
+
 /** Creates the deterministic lender HTTP boundary over injected network adapters. */
 export function createLenderApp(options: LenderAppOptions): Application {
   const app = express();
@@ -248,12 +252,14 @@ export function createLenderApp(options: LenderAppOptions): Application {
       }));
       return;
     }
+    const requestInvalid = error instanceof ZodError || isMalformedJson(error);
     const code = error instanceof CreditProtocolError
       ? error.code
-      : error instanceof ZodError ? ErrorCode.REQUEST_INVALID : ErrorCode.INTERNAL_ERROR;
-    const status = error instanceof ZodError ? 400 : statusFor(code);
+      : requestInvalid ? ErrorCode.REQUEST_INVALID : ErrorCode.INTERNAL_ERROR;
+    const status = requestInvalid ? 400 : statusFor(code);
     const detail = error instanceof ZodError
       ? error.issues.map(issue => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; ")
+      : isMalformedJson(error) ? "Request body contains malformed JSON"
       : error instanceof CreditProtocolError ? error.message : "Internal server error";
     response.status(status).json(ErrorResponseSchema.parse({ code, detail }));
   };

@@ -236,6 +236,27 @@ export class LenderStore {
     }
   }
 
+  replaceFundingTransaction(
+    id: string,
+    token: string,
+    expectedTransactionId: string,
+    transactionId: string,
+    now: string,
+  ): void {
+    const result = this.database.prepare(`
+      UPDATE lender_fundings
+      SET transaction_id = ?, updated_at = ?
+      WHERE id = ? AND status IN ('preparing', 'pending')
+        AND submission_token = ? AND transaction_id = ?
+    `).run(transactionId, now, id, token, expectedTransactionId);
+    if (result.changes !== 1) {
+      throw new CreditProtocolError(
+        ErrorCode.FUNDING_MISMATCH,
+        "Funding transaction changed before the retry identifier could be persisted",
+      );
+    }
+  }
+
   markFundingConfirmed(id: string, transactionId: string, now: string): void {
     const result = this.database.prepare(`
       UPDATE lender_fundings
