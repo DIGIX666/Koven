@@ -31,7 +31,7 @@ const fakeGroth16Verifier = (accept: boolean): Groth16Verifier & { verify: Retur
 });
 
 describe("verifyProofBundle", () => {
-  it("fails closed with the production adapter until the real Groth16 verifier lands", async () => {
+  it("rejects a fabricated proof with the real verifier by default and fails closed with the unavailable adapter", async () => {
     expect(await verifyProofBundle(bundle(), trusted, expected)).toEqual({ ok: false, code: "proof_invalid" });
     expect(await verifyProofBundle(bundle(), trusted, expected, unavailableGroth16Verifier)).toEqual({ ok: false, code: "proof_invalid" });
   });

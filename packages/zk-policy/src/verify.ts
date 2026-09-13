@@ -2,6 +2,7 @@ import { ErrorCode } from "@koven/domain";
 import { ProofBundleSchema } from "@koven/schemas";
 
 import { CIRCUIT_ID, type Groth16Proof, type ProofBundle } from "./bundle.js";
+import { snarkjsGroth16Verifier } from "./prove.js";
 
 /** Groth16 verification over BN254. Pure: it receives the caller's own key object. */
 export interface Groth16Verifier {
@@ -9,9 +10,10 @@ export interface Groth16Verifier {
 }
 
 /**
- * The A3.1 production adapter. It fails closed: every bundle is `proof_invalid`
- * until A3.2 replaces it with `snarkjs.groth16.verify`. Only tests may inject
- * another verifier, and they must name it explicitly.
+ * Fail-closed adapter: every bundle is `proof_invalid`. Use it wherever a
+ * deployment must refuse proofs outright; the production default is
+ * `snarkjsGroth16Verifier`. Only tests may inject another verifier, and they
+ * must name it explicitly.
  */
 export const unavailableGroth16Verifier: Groth16Verifier = {
   async verify() {
@@ -51,14 +53,15 @@ const DECIMAL = /^(0|[1-9]\d*)$/;
  * Independent verification of a policy proof, safe to run inside a lender
  * process: no file I/O, no network, and nothing taken from the bundle as an
  * expectation. Checks run in the frozen order and stop at the first failure:
- * circuit ID, the caller's own key hash, Groth16 verification, commitment
- * binding, approved root, then cap.
+ * circuit ID, the caller's own key hash, Groth16 verification (real
+ * `snarkjs.groth16.verify` by default), commitment binding, approved root,
+ * then cap.
  */
 export async function verifyProofBundle(
   bundle: ProofBundle,
   trusted: TrustedVerificationInputs,
   expected: ExpectedBinding,
-  verifier: Groth16Verifier = unavailableGroth16Verifier,
+  verifier: Groth16Verifier = snarkjsGroth16Verifier,
 ): Promise<VerificationResult> {
   const parsed = ProofBundleSchema.safeParse(bundle);
   if (!parsed.success) return { ok: false, code: ErrorCode.PROOF_INVALID };

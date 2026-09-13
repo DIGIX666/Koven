@@ -22,6 +22,9 @@
     },
     {
       "path": "../schemas/tsconfig.build.json"
+    },
+    {
+      "path": "../x402/tsconfig.build.json"
     }
   ]
 }

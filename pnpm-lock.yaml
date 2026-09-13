@@ -257,6 +257,12 @@ importers:
       '@koven/schemas':
         specifier: workspace:*
         version: link:../schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../x402
+      snarkjs:
+        specifier: 0.7.6
+        version: 0.7.6
     devDependencies:
       circomlib:
         specifier: 2.0.5
@@ -264,9 +270,6 @@ importers:
       circomlibjs:
         specifier: 0.1.7
         version: 0.1.7
-      snarkjs:
-        specifier: 0.7.6
-        version: 0.7.6
 
   services/directory: {}
 

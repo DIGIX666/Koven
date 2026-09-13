@@ -86,7 +86,7 @@ credentials for local development.
 | `pnpm test:e2e` | Run the complete real-service vertical flow with deterministic offline network boundaries |
 | `pnpm test:e2e:testnet` | Run the same vertical flow on Hedera testnet and print funding, payment and repayment HashScan links |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
-| `pnpm zk:test` | Run the Policy V1 feasibility benchmark on the verified official artifacts; requires `pnpm zk:build` first |
+| `pnpm zk:test` | Run the artifact-bound suites (Policy V1 feasibility benchmark, proving and independent verification) on the verified official artifacts; requires `pnpm zk:build` first |
 
 Use the pinned pnpm version from `packageManager` (Corepack), then run:
 
