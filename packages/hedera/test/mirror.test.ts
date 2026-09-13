@@ -5,21 +5,23 @@ const row = { topic_id: "0.0.50", payer_account_id: "0.0.10", sequence_number: 2
   consensus_timestamp: "1788696000.000000001", message: "e30=", running_hash: "YWJj", running_hash_version: 3, chunk_info: null };
 afterEach(() => vi.unstubAllGlobals());
 const respond = (messages: unknown[]) => vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages, links: { next: "https://untrusted.example/" } }))));
-it("resumes with the exact next sequence without following server links", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(row))));
+it("requests a bounded ascending base64 page and returns the cursor without following links", async () => {
+  respond([row]);
   expect(await getTopicMessages("0.0.50", { ...opts, afterSequenceNumber: 1n, limit: 10 })).toEqual([{
     topicId: "0.0.50", payerAccountId: "0.0.10", sequenceNumber: 2n,
     consensusTimestamp: row.consensus_timestamp, message: "e30=", runningHash: "YWJj", runningHashVersion: 3,
   }]);
   expect(fetch).toHaveBeenCalledOnce();
   const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-  expect(String(url)).toBe("https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.50/messages/2");
+  expect(String(url)).toBe("https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.50/messages?encoding=base64&order=asc&limit=10&sequencenumber=gt%3A1");
   expect(init?.redirect).toBe("error");
 });
 
-it("returns no resumed messages when the exact next sequence is not available", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not found", { status: 404 })));
-  await expect(getTopicMessages("0.0.50", { ...opts, afterSequenceNumber: 2n })).resolves.toEqual([]);
+it("reads from the start without a sequence filter, which the Mirror Node rejects at zero", async () => {
+  respond([row]);
+  expect(await getTopicMessages("0.0.50", { ...opts, limit: 10 })).toHaveLength(1);
+  expect(String(vi.mocked(fetch).mock.calls[0]![0]))
+    .toBe("https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.50/messages?encoding=base64&order=asc&limit=10");
 });
 it("fails closed on foreign topics, imprecise integers, unordered messages and chunks", async () => {
   for (const change of [{ topic_id: "0.0.999" }, { sequence_number: 9007199254740992 },

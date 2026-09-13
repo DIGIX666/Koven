@@ -34,8 +34,10 @@ export interface AuditOutboxJob {
 export interface AuditOutboxStore {
   claimDue(now: number, leaseMs: number): AuditOutboxJob | undefined;
   savePrepared(job: AuditOutboxJob, prepared: PreparedHcsMessage, now: number): void;
+  /** Records, before the network call, that the stored bytes may have reached a node. */
   markSubmissionAttempted(job: AuditOutboxJob, now: number): void;
   markPublished(job: AuditOutboxJob, transactionId: string, sequenceNumber: bigint, publishedAt: string): void;
+  /** Releases the lease, counts one more failed attempt and schedules the next one. */
   retry(job: AuditOutboxJob, nextAttemptAt: number, detail: string, resetPrepared: boolean, now: number): void;
   pendingCount(): number;
   nextAttemptAt(): number | null;
@@ -186,6 +188,7 @@ export class HcsAuditWriter implements AuditSink {
     this.options.store.markPublished(job, transactionId, sequenceNumber, new Date(this.now()).toISOString());
   }
 
+  /** Full-jitter exponential backoff over every failed attempt (prepare, submit or reconcile), capped at one minute. */
   private retry(job: AuditOutboxJob, detail: string, resetPrepared: boolean): void {
     const cap = Math.min(60_000, 1_000 * (2 ** Math.min(job.attempts, 16)));
     const delay = Math.max(1, Math.floor(this.random() * cap));

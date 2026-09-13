@@ -88,7 +88,7 @@ export class SqliteAuditOutbox implements AuditOutboxStore {
   markSubmissionAttempted(job: AuditOutboxJob, now: number): void {
     this.mutate(job, `
       UPDATE hcs_audit_outbox
-      SET submission_attempted = 1, attempts = attempts + 1, updated_at = ?
+      SET submission_attempted = 1, updated_at = ?
       WHERE event_id = ? AND status = 'processing' AND lease_token = ?
     `, now, job.eventId, job.token);
   }
@@ -138,7 +138,7 @@ export class SqliteAuditOutbox implements AuditOutboxStore {
     this.mutate(job, `
       UPDATE hcs_audit_outbox
       SET status = 'pending', ${prepared}
-          next_attempt_at = ?, lease_token = NULL, lease_until = NULL,
+          attempts = attempts + 1, next_attempt_at = ?, lease_token = NULL, lease_until = NULL,
           last_error = ?, updated_at = ?
       WHERE event_id = ? AND status = 'processing' AND lease_token = ?
     `, nextAttemptAt, detail.slice(0, 1_000), now, job.eventId, job.token);

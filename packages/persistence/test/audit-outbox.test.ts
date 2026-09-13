@@ -170,6 +170,26 @@ describe("durable HCS audit outbox", () => {
     });
   });
 
+  it("backs off exponentially with jitter on every failed attempt, capped at one minute", async () => {
+    append("event-1");
+    const publisher = new FakePublisher();
+    publisher.prepare = async () => { throw new Error("network unavailable"); };
+    const store = new SqliteAuditOutbox(database);
+    const writer = new HcsAuditWriter({ store, publisher, now: () => now, random: () => 1 });
+    const delays: number[] = [];
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const before = now;
+      expect(await writer.dispatchDue()).toBe(1);
+      const next = store.nextAttemptAt();
+      delays.push(next! - before);
+      now = next!;
+    }
+    expect(delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000]);
+    expect(database.prepare("SELECT attempts, last_error FROM hcs_audit_outbox WHERE event_id = 'event-1'").get())
+      .toEqual({ attempts: 8, last_error: "network unavailable" });
+    expect(listMissionEvents(database, "mission-1")[0]?.hcsSequenceNumber).toBeUndefined();
+  });
+
   it("does not let a later mission event pass an earlier leased event", () => {
     append("event-1");
     append("event-2");
