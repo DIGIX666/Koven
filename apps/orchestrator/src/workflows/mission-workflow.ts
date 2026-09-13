@@ -19,7 +19,7 @@ import {
 import { rankProviders } from "@koven/policy";
 import type { HttpRequest } from "@koven/schemas";
 import { type FieldHasher, loadPoseidon } from "@koven/x402";
-import { buildMerkleTree } from "@koven/zk-policy";
+import { buildMissionRecipientRoot } from "@koven/zk-policy";
 
 import { hashBytes } from "../canonical.js";
 import type { MissionStateMachine } from "../state/index.js";
@@ -71,7 +71,7 @@ export class MissionWorkflow {
   /** Singleton recipient root of the selected provider, as the signer and lender recompute it. */
   async recipientRoot(providerAccountId: string): Promise<string> {
     this.poseidon ??= await loadPoseidon();
-    return buildMerkleTree([providerAccountId], this.poseidon).root;
+    return buildMissionRecipientRoot(providerAccountId, this.poseidon);
   }
 
   async run(request: HttpRequest<"createMission">): Promise<PersistedMission> {

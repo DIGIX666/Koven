@@ -88,7 +88,9 @@ x402 challenge before proving.
 For the MVP, a mission provisions a root containing only its selected provider.
 Candidate providers from the directory are never all approved at once. Repayment
 uses the signer's separate `/repay` command, so lender accounts do not appear in
-this tree.
+this tree. `buildMissionRecipientRoot(providerAccountId, poseidon)` is the shared
+host-side contract used by the orchestrator, restricted signer and lenders to
+reconstruct that singleton root independently.
 
 ## Payment commitment
 

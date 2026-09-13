@@ -2,7 +2,7 @@ import { CreditProtocolError } from "@koven/credit-protocol";
 import { ErrorCode, type CreditOffer, type ProofBundle } from "@koven/domain";
 import type { HttpRequest } from "@koven/schemas";
 import { challengeToFieldInputs, type FieldHasher, paymentCommitment, resourceHashHex } from "@koven/x402";
-import { buildMerkleTree, type Groth16Verifier, loadPinnedVerificationKey, verifyProofBundle } from "@koven/zk-policy";
+import { buildMissionRecipientRoot, type Groth16Verifier, loadPinnedVerificationKey, verifyProofBundle } from "@koven/zk-policy";
 
 import type { MissionPolicy } from "./store.js";
 
@@ -48,7 +48,7 @@ export class LenderProofVerifier {
 
   /** The singleton recipient root the registrar policy must carry for its selected provider. */
   rootFor(providerAccountId: string): string {
-    return buildMerkleTree([providerAccountId], this.options.poseidon).root;
+    return buildMissionRecipientRoot(providerAccountId, this.options.poseidon);
   }
 
   /**
