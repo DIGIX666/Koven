@@ -84,9 +84,9 @@ ZK_CIRCUIT_ID=koven-policy-v1
 
 `0.0.0` identifies HBAR in the payment requirements; amounts are decimal tinybar
 strings (1 HBAR = 100,000,000 tinybars). Set `X402_PAY_TO_ACCOUNT_ID` to the same
-numeric ID as `PROVIDER_A_ACCOUNT_ID` for the initial single-provider deployment.
-Do not put a shell-variable reference into the value: environment expansion is
-not assumed. The second provider will use its own payTo in M4.
+numeric ID as `PROVIDER_A_ACCOUNT_ID` when starting a single provider directly.
+The two-provider launcher maps each provider account independently. Do not put a
+shell-variable reference into the value: environment expansion is not assumed.
 
 Each lender process verifies borrower proof bundles with its own key:
 
@@ -104,13 +104,18 @@ caps come from trusted policy provisioning, not invented setup values.
 
 ## Paid scan provider configuration
 
-The scan provider (`services/resource-server`, A2.1/A2.2) reads these additional
-variables; the template lists them under "Paid scan provider":
+Each scan-provider process receives these generic settings. The launcher maps
+the corresponding `PROVIDER_A_*` and `PROVIDER_B_*` inventory variables onto
+them without sharing databases or callback secrets:
 
 | Variable | Meaning |
 | --- | --- |
 | `PROVIDER_ID` | Provider identity written into every `ScanReport.providerId` |
-| `PROVIDER_A_PRICE_TINYBAR` | Exact HBAR price of one scan, decimal tinybars, nonzero |
+| `PORT` | HTTP listener port |
+| `PAY_TO` | Provider account receiving the exact HBAR payment |
+| `PRICE_TINYBAR` | Exact HBAR price of one scan, decimal tinybars, nonzero |
+| `LATENCY_MS` | Deterministic simulated latency from 0 to 60,000 milliseconds |
+| `SCAN_FAILURE_MODE` | `none`, `timeout`, or `malformed`; controlled failures stop before settlement |
 | `RESOURCE_SERVER_PUBLIC_URL` | Public base URL without trailing slash; `/scan` is appended and must equal the signer's `scanUrl` |
 | `RESOURCE_SERVER_HOST` | Interface the listener binds to; defaults to `127.0.0.1`. Set `0.0.0.0` (or a specific interface) when the public URL is served from another host or a published container port; a non-loopback public URL must then be HTTPS |
 | `RESOURCE_SERVER_DATABASE_URL` | SQLite file for paid-scan claims, reports, settlements and the callback outbox; one per provider |
@@ -118,15 +123,23 @@ variables; the template lists them under "Paid scan provider":
 | `CALLBACK_SECRET` | Unpadded base64url encoding of exactly 32 random bytes; distinct per provider and shared only with the callback verifiers |
 | `CONSUMER_PUBLIC_KEY` | Restricted signer's ECDSA public key, pinned by `CONSUMER_ACCOUNT_ID`, used to verify scan payment authorizations |
 
-The provider also uses `X402_PAY_TO_ACCOUNT_ID`, `X402_NETWORK`, `X402_ASSET`,
-`X402_FACILITATOR_URL`, `HEDERA_MIRROR_NODE_URL` and `RESOURCE_SERVER_PORT`. It
-never receives a private key. Generate a callback secret with
+For direct single-provider compatibility, `RESOURCE_SERVER_PORT`,
+`X402_PAY_TO_ACCOUNT_ID`, and `PROVIDER_A_PRICE_TINYBAR` remain accepted aliases.
+Every provider also uses `X402_NETWORK`, `X402_ASSET`, `X402_FACILITATOR_URL`,
+and `HEDERA_MIRROR_NODE_URL`. It never receives a private key. Generate each
+callback secret with
 `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
 
 Run it from the repository root with root `.env` loaded (Node 20.6+ for `--env-file`):
 
 ```sh
 pnpm --filter @koven/resource-server dev
+```
+
+To start both configured instances from the same binary and root `.env`:
+
+```sh
+pnpm tsx scripts/run-providers.ts
 ```
 
 An unpaid `POST /scan` with a source-bound `ScanRequest` then answers `402` with
@@ -328,3 +341,62 @@ requires the testnet facilitator/mirror URLs shown above and rejects conflicting
 network/asset settings. It does not exercise the later scan authorization gate.
 
 API reference: [Blocky402 facilitator endpoints](https://blocky402.com/docs/api-reference/).
+
+## Local competition services and trusted registration
+
+Copy the new lender ports, database paths and service credentials from `.env.example`.
+The two lender signer credentials must match the account entries in the signer's
+credential map. Each lender registrar credential is distinct. Set the borrower
+public key and the configured demo reputation; lender processes receive only their
+own private key. Starting a lender does not submit a funding transaction.
+
+Run these commands in separate terminals from the repository root:
+
+```sh
+pnpm dev:providers
+pnpm dev:lenders
+pnpm dev:directory
+pnpm dev:registrar
+```
+
+The directory and registrar load the same provider metadata from the role fields
+in `.env`. An optional JSON registry file can replace those fields. Reputation is
+computed from the lifecycle event database. The registrar stores operator approvals
+and their frozen ranking in its own database, which must not be writable by the
+orchestrator. Service launchers bind to loopback.
+
+The operator first sends `POST /missions/approve` to the registrar with its operator
+credential and `{ "missionId": "…", "request": { … } }`, where `request` is the
+mission creation request. The mission ID must be the ID assigned to the workflow.
+The approval fixes borrower, source, budget, session, provider and singleton root.
+Only the operator and registrar receive the approval credential. Only the registrar
+and the target service receive each target's registration credential.
+
+Configure the workflow's directory and policy client with the registrar origin and
+the orchestrator credential. Ranking reads include the mission ID and return the
+approved snapshot. `POST /missions/provision` accepts only the exact approved policy;
+the registrar sends its stored policy to the signer and both lenders. Retries after
+partial provisioning use the same immutable approval, even after a registrar restart
+or a change in reputation. Do not inject signer or lender registrar credentials into
+the orchestrator process.
+
+The offline end-to-end suite starts two providers, two lenders, a directory and a
+registrar for each mission. It pays the cheaper provider, adds controlled lifecycle
+failures to the shared reputation history, then pays the other provider. Both real
+lenders quote each mission; all eligible offers and their scores are persisted in
+the local audit before acceptance. Both missions exercise callback replay and
+repayment idempotency. The artifact suite repeats this with proof enforcement.
+
+The explicit `pnpm test:e2e:testnet` command performs the corresponding two missions
+on testnet and spends test HBAR. Configure both provider accounts, both lender keys,
+and distinct ports, including the dedicated lender and registrar ports. Prices and
+latencies from `.env.example` with a budget covering both prices support the expected
+provider switch. The injected failures are test fixtures, not reported live outages.
+Each mission writes a separate recovery directory with provider selection metadata;
+set `KOVEN_TESTNET_RESUME_DIRECTORY` to that directory to resume callback recovery
+without creating another mission. To finish a competition run interrupted after
+provider B closed, combine that resume directory with
+`KOVEN_TESTNET_CONTINUE_COMPETITION=1`: the existing callback is replayed and only
+the provider A mission is created. The reference scenario injects eight failures
+and saves its reputation history alongside the recovery databases. Local validation
+does not execute this command.

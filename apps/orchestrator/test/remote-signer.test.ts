@@ -106,7 +106,7 @@ describe("orchestrator restricted-signer clients", () => {
   it("registers the exact mission policy through an authenticated service boundary", async () => {
     const credential = "p".repeat(43);
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      expect(new URL(input instanceof Request ? input.url : input).pathname).toBe("/internal/missions/register");
+      expect(new URL(input instanceof Request ? input.url : input).pathname).toBe("/missions/provision");
       expect(init?.method).toBe("POST");
       expect(init?.redirect).toBe("error");
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${credential}`);

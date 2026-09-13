@@ -86,6 +86,44 @@ describe("scan service", () => {
     expect(hasValidReportHash(report)).toBe(true);
   });
 
+  it("applies configured latency and deterministic failure modes before scanning", async () => {
+    const source = "pragma solidity ^0.8.24; contract Controlled {}";
+    const request = {
+      missionId: "mission-controlled",
+      targetRef: "Controlled.sol",
+      source,
+      targetSha256: hashSource(source),
+    };
+    const delay = vi.fn(async (_milliseconds: number) => undefined);
+    const engine: ScanEngine = { id: "fake", scan: vi.fn(async () => []) };
+    const normal = createScanService({
+      providerId: "provider-b",
+      engine,
+      expectedLatencyMs: 9_000,
+      delay,
+    });
+
+    expect((await normal.scan(request)).providerId).toBe("provider-b");
+    expect(delay).toHaveBeenCalledWith(9_000);
+    expect(engine.scan).toHaveBeenCalledOnce();
+
+    const timeoutEngine: ScanEngine = { id: "timeout", scan: vi.fn(async () => []) };
+    await expect(createScanService({
+      providerId: "provider-b",
+      engine: timeoutEngine,
+      failureMode: "timeout",
+    }).scan(request)).rejects.toMatchObject({ status: 504, code: "internal_error" });
+    expect(timeoutEngine.scan).not.toHaveBeenCalled();
+
+    const malformedEngine: ScanEngine = { id: "malformed", scan: vi.fn(async () => []) };
+    await expect(createScanService({
+      providerId: "provider-b",
+      engine: malformedEngine,
+      failureMode: "malformed",
+    }).scan(request)).rejects.toMatchObject({ status: 500, code: "internal_error" });
+    expect(malformedEngine.scan).not.toHaveBeenCalled();
+  });
+
   it("fails explicitly, without truncating, when findings exceed the report contract", async () => {
     const finding = (line: number, message = "Avoid time-based decisions"): Finding => ({
       ruleId: "not-rely-on-time",

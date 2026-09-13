@@ -8,7 +8,9 @@ export const lenderPolicies: readonly LenderPolicyName[] = [
 
 export * from "./fund.js";
 export * from "./policy.js";
+export * from "./policies/competitive.js";
 export * from "./policies/conservative.js";
 export * from "./server.js";
 export * from "./store.js";
 export * from "./verify.js";
+export * from "./runtime.js";

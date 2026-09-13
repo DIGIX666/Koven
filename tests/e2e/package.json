@@ -16,7 +16,8 @@
     "@koven/x402": "workspace:*",
     "@koven/zk-policy": "workspace:*",
     "@x402/core": "2.24.0",
-    "@x402/hedera": "2.24.0"
+    "@x402/hedera": "2.24.0",
+    "@koven/directory": "workspace:*"
   },
   "devDependencies": {
     "tsx": "4.20.6"

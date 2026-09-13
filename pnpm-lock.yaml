@@ -24,9 +24,21 @@ importers:
       '@eslint/js':
         specifier: 9.35.0
         version: 9.35.0
+      '@koven/directory':
+        specifier: workspace:*
+        version: link:services/directory
       '@koven/hedera':
         specifier: workspace:*
         version: link:packages/hedera
+      '@koven/lender-agents':
+        specifier: workspace:*
+        version: link:agents/lenders
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:packages/persistence
+      '@koven/resource-server':
+        specifier: workspace:*
+        version: link:services/resource-server
       '@types/node':
         specifier: 22.18.6
         version: 22.18.6
@@ -63,6 +75,9 @@ importers:
       '@koven/hedera':
         specifier: workspace:*
         version: link:../../packages/hedera
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -106,6 +121,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@types/express':
         specifier: 5.0.3
         version: 5.0.3
@@ -127,6 +145,9 @@ importers:
       '@koven/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -146,6 +167,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@koven/directory':
+        specifier: workspace:*
+        version: link:../../services/directory
       '@koven/testing':
         specifier: workspace:*
         version: link:../../packages/testing
@@ -203,7 +227,11 @@ importers:
         specifier: 9.6.0
         version: 9.6.0
 
-  packages/policy: {}
+  packages/policy:
+    dependencies:
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/schemas:
     dependencies:
@@ -283,7 +311,39 @@ importers:
         specifier: 0.1.7
         version: 0.1.7
 
-  services/directory: {}
+  services/directory:
+    dependencies:
+      '@koven/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
+      express:
+        specifier: 5.1.0
+        version: 5.1.0
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/express':
+        specifier: 5.0.3
+        version: 5.0.3
 
   services/resource-server:
     dependencies:
@@ -373,6 +433,9 @@ importers:
       '@koven/consumer-agent':
         specifier: workspace:*
         version: link:../../agents/consumer
+      '@koven/directory':
+        specifier: workspace:*
+        version: link:../../services/directory
       '@koven/domain':
         specifier: workspace:*
         version: link:../../packages/domain

@@ -131,8 +131,8 @@ describe("first conservative lender", () => {
     const conservative = new ConservativeLenderPolicy({
       maxPrincipalTinybar: (1n << 64n) - 1n,
       maxTermSeconds: 7_200,
-      minimumReputation: 0.8,
-      feeBasisPoints: 500,
+      minReputationScore: 0.8,
+      feeBps: 500,
     });
 
     expect(conservative.evaluate(signedRequest(), Number.NaN)).toBeUndefined();

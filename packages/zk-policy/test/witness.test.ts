@@ -2,7 +2,14 @@ import type { NormalizedChallenge } from "@koven/domain";
 import { type FieldHasher, loadPoseidon, normalizeChallenge } from "@koven/x402";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { buildMerkleTree, buildWitness, emptyLeaf, MERKLE_LEAVES, WitnessError } from "../src/witness.js";
+import {
+  buildMerkleTree,
+  buildMissionRecipientRoot,
+  buildWitness,
+  emptyLeaf,
+  MERKLE_LEAVES,
+  WitnessError,
+} from "../src/witness.js";
 
 // docs/zk-spike.md fixed vector.
 const VECTOR = {
@@ -79,6 +86,18 @@ describe("buildMerkleTree", () => {
     failure(() => buildMerkleTree(["0.0.01"], poseidon), "request_invalid");
     failure(() => buildMerkleTree(["0x1234"], poseidon), "request_invalid");
     failure(() => buildMerkleTree([VECTOR.account], poseidon).pathFor("0.0.2"), "recipient_not_approved");
+  });
+});
+
+describe("buildMissionRecipientRoot", () => {
+  it("approves only the provider selected for the mission", () => {
+    const selectedProvider = VECTOR.account;
+    const losingProvider = "0.0.2001";
+    const root = buildMissionRecipientRoot(selectedProvider, poseidon);
+
+    expect(root).toBe(buildMerkleTree([selectedProvider], poseidon).root);
+    expect(root).not.toBe(buildMissionRecipientRoot(losingProvider, poseidon));
+    failure(() => buildMerkleTree([selectedProvider], poseidon).pathFor(losingProvider), "recipient_not_approved");
   });
 });
 

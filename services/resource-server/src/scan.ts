@@ -2,6 +2,9 @@ import { createRequire } from "node:module";
 
 import type { Finding, Severity } from "@koven/domain";
 
+export const SCAN_FAILURE_MODES = ["none", "timeout", "malformed"] as const;
+export type ScanFailureMode = (typeof SCAN_FAILURE_MODES)[number];
+
 export interface ScanEngine {
   readonly id: string;
   scan(source: string, ref: string): Promise<Finding[]>;

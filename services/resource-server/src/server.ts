@@ -18,7 +18,7 @@ import { buildCompletionCallback, CallbackDispatcher } from "./callback.js";
 import { ProviderStore, ProviderStoreError, type StoredPayment } from "./outbox.js";
 import { buildReport, canonicalJson } from "./report.js";
 import { parseBoundPaidScanRequestBase, parseBoundScanRequest, ScanServiceError } from "./request.js";
-import { SolhintScanEngine, type ScanEngine } from "./scan.js";
+import { SolhintScanEngine, type ScanEngine, type ScanFailureMode } from "./scan.js";
 import {
   SettlementConfirmationError,
   type SettlementConfirmer,
@@ -37,6 +37,9 @@ export interface ScanServiceOptions {
   readonly providerId: string;
   readonly engine?: ScanEngine;
   readonly now?: () => Date;
+  readonly expectedLatencyMs?: number;
+  readonly failureMode?: ScanFailureMode;
+  readonly delay?: (milliseconds: number) => Promise<void>;
 }
 
 /** Fails explicitly when an engine result cannot be represented by the report contract. */
@@ -62,11 +65,24 @@ function assertReportLimits(findings: Finding[]): void {
 export function createScanService(options: ScanServiceOptions): ScanService {
   const engine = options.engine ?? new SolhintScanEngine();
   const now = options.now ?? (() => new Date());
+  const expectedLatencyMs = options.expectedLatencyMs ?? 0;
+  const failureMode = options.failureMode ?? "none";
+  const delay = options.delay ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
+  if (!Number.isSafeInteger(expectedLatencyMs) || expectedLatencyMs < 0 || expectedLatencyMs > 60_000) {
+    throw new RangeError("Expected scan latency must be between 0 and 60000 milliseconds");
+  }
 
   return {
     async scan(input: unknown): Promise<ScanReport> {
       const request = parseBoundScanRequest(input);
       const startedAt = now().toISOString();
+      if (expectedLatencyMs > 0) await delay(expectedLatencyMs);
+      if (failureMode === "timeout") {
+        throw new ScanServiceError(ErrorCode.INTERNAL_ERROR, 504, "Scan provider timed out");
+      }
+      if (failureMode === "malformed") {
+        throw new ScanServiceError(ErrorCode.INTERNAL_ERROR, 500, "Scan engine returned malformed output");
+      }
       const findings = await engine.scan(request.source, request.targetRef);
       const completedAt = now().toISOString();
       assertReportLimits(findings);
@@ -90,6 +106,9 @@ export interface PaidScanServerOptions extends Omit<PaymentAuthorizationPolicy, 
   readonly dispatchCallbacks?: boolean;
   readonly reconcileSettlements?: boolean;
   readonly settlementReconcileIntervalMs?: number;
+  readonly expectedLatencyMs?: number;
+  readonly scanFailureMode?: ScanFailureMode;
+  readonly scanDelay?: (milliseconds: number) => Promise<void>;
 }
 
 export interface PaidScanServer {
@@ -233,6 +252,9 @@ export async function createPaidScanServer(options: PaidScanServerOptions): Prom
     providerId: options.providerId,
     ...(options.engine ? { engine: options.engine } : {}),
     now,
+    ...(options.expectedLatencyMs === undefined ? {} : { expectedLatencyMs: options.expectedLatencyMs }),
+    ...(options.scanFailureMode === undefined ? {} : { failureMode: options.scanFailureMode }),
+    ...(options.scanDelay === undefined ? {} : { delay: options.scanDelay }),
   });
   const callbacks = new CallbackDispatcher({
     store: options.store,

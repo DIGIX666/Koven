@@ -19,10 +19,12 @@ import {
   HttpLender,
   ZkPolicyProver,
 } from "@koven/consumer-agent";
+import { createDirectoryApp, createRegistrarApp, HttpMissionPolicyTarget, ProviderRegistry } from "@koven/directory";
 import { ErrorCode, type Provider } from "@koven/domain";
 import { explorerUrl, PrivateKey } from "@koven/hedera";
 import {
   ConservativeLenderPolicy,
+  CompetitiveLenderPolicy,
   createLenderApp,
   FundingService,
   HttpLoanRegistrationClient,
@@ -34,6 +36,7 @@ import {
   CompletionHandler,
   createOrchestratorApp,
   HttpMissionPolicyRegistrar,
+  HttpProviderDirectory,
   HttpRepaymentClient,
   HttpSignerCompletionClient,
   MissionStateMachine,
@@ -42,6 +45,7 @@ import {
   RepaymentWorkflow,
 } from "@koven/orchestrator";
 import {
+  createEvent,
   getLoanByMission,
   getMission,
   listMissionEvents,
@@ -68,11 +72,13 @@ import { createHttpPaymentAuthorizer, loadPoseidon } from "@koven/x402";
 import { buildMerkleTree, loadOfficialArtifacts } from "@koven/zk-policy";
 import { expect, vi } from "vitest";
 
+import { injectCompetitionFailures } from "./competition-history.js";
+
 const consumerAccountId = "0.0.1001";
 const lenderAccountId = "0.0.2001";
-const providerAccountId = "0.0.3001";
+
 const feePayerAccountId = "0.0.4001";
-const priceTinybar = 1_000_000n;
+
 const fundingTxId = "0.0.2001@1789293600.000000001";
 const repaymentTxId = "0.0.1001@1789293600.000000002";
 const missionId = "mission-vertical";
@@ -84,6 +90,8 @@ const credentials = {
   lenderOperator: "p".repeat(43),
 };
 const callbackSecret = Buffer.alloc(32, 7);
+
+const eventOrder = (database: KovenDatabase, id: string, type: string): number => listMissionEvents(database, id).findIndex(event => event.type === type);
 
 interface TransferRecord {
   readonly payerAccountId: string;
@@ -185,7 +193,27 @@ export interface VerticalSliceOptions {
  * exactly once. In zk mode the consumer proves the payment intent before credit
  * and the signer refuses anything that is not a verified, correctly bound proof.
  */
-export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Promise<void> {
+export async function runVerticalSlice(options: VerticalSliceOptions): Promise<void> {
+  const history = openDatabase(":memory:");
+  try {
+    await runCompetitionMission(options, "b", history);
+    injectCompetitionFailures(history, "provider-b");
+    await runCompetitionMission(options, "a", history);
+  } finally { history.close(); }
+}
+
+async function runCompetitionMission({ proofMode }: VerticalSliceOptions, selected: "a" | "b", history: KovenDatabase): Promise<void> {
+  const providerId = `provider-${selected}`;
+  const providerAccountId = selected === "a" ? "0.0.3001" : "0.0.3002";
+  const priceTinybar = selected === "a" ? 1_100_000n : 1_000_000n;
+  const budget = 1_100_000n;
+  const extraServers: Server[] = [];
+  const extraDatabases: KovenDatabase[] = [];
+  const extraProviders: Awaited<ReturnType<typeof createPaidScanServer>>[] = [];
+  let registrarUrl = "";
+  let secondLenderUrl = "";
+  const secondLenderKey = PrivateKey.generateECDSA();
+  const secondLenderAccountId = "0.0.2002";
   const directory = await mkdtemp(join(tmpdir(), "koven-vertical-"));
   const signerPath = join(directory, "signer.sqlite");
   const lenderPath = join(directory, "lender.sqlite");
@@ -273,7 +301,7 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       store,
       accountId: consumerAccountId,
       privateKey: consumerKey,
-      lenderPublicKeys: { [lenderAccountId]: lenderKey.publicKey.toStringRaw() },
+      lenderPublicKeys: { [lenderAccountId]: lenderKey.publicKey.toStringRaw(), [secondLenderAccountId]: secondLenderKey.publicKey.toStringRaw() },
       confirmer: { confirm: confirmTransfer },
       now: () => new Date(clock).toISOString(),
       ...zkOptions,
@@ -281,7 +309,7 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     completion: new CompletionService({
       store,
       accountId: consumerAccountId,
-      providerCallbackSecrets: { "provider-a": callbackSecret },
+      providerCallbackSecrets: { [providerId]: callbackSecret },
       confirmer: { confirm: confirmTransfer },
       now: () => new Date(clock),
     }),
@@ -296,7 +324,7 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       consumer: credentials.consumer,
       orchestrator: credentials.orchestrator,
       registrar: credentials.registrar,
-      lenders: { [credentials.lender]: lenderAccountId },
+      lenders: { [credentials.lender]: lenderAccountId, ["v".repeat(43)]: secondLenderAccountId },
     },
     ...(proofPolicy === undefined ? {} : { proofPolicy }),
     now: () => new Date(clock),
@@ -307,7 +335,7 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     credential: credentials.orchestrator,
   });
   const provider: Provider = {
-    id: "provider-a",
+    id: providerId,
     accountId: providerAccountId,
     endpoint: providerUrl,
     capability: "solidity-scan",
@@ -328,11 +356,11 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
         getBalanceTinybar: async accountId => balances.get(accountId) ?? 0n,
       },
       signer: new HttpCreditSigner({ baseUrl: signerUrl, credential: credentials.consumer }),
-      lender: new HttpLender({
+      lenders: [new HttpLender({
         baseUrl: lenderUrl,
         publicKey: lenderKey.publicKey,
         now: () => new Date(clock).toISOString(),
-      }),
+      }), new HttpLender({ baseUrl: secondLenderUrl, publicKey: secondLenderKey.publicKey, now: () => new Date(clock).toISOString() })],
       payment: new ConsumerPaymentService({
         borrowerAccountId: consumerAccountId,
         authorizer: createHttpPaymentAuthorizer({
@@ -351,14 +379,8 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       database,
       stateMachine,
       consumer,
-      policyRegistrars: [
-        new HttpMissionPolicyRegistrar({ baseUrl: signerUrl, credential: credentials.registrar }),
-        new HttpMissionPolicyRegistrar({
-          baseUrl: lenderUrl,
-          credential: credentials.lenderOperator,
-        }),
-      ],
-      providers: [provider],
+      policyRegistrars: [new HttpMissionPolicyRegistrar({ baseUrl: registrarUrl, credential: credentials.orchestrator })],
+      providerDirectory: new HttpProviderDirectory({ baseUrl: registrarUrl, credential: credentials.orchestrator }),
       borrowerAccountId: consumerAccountId,
       poseidon,
       now: () => new Date(clock).toISOString(),
@@ -414,8 +436,8 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       policy: new ConservativeLenderPolicy({
         maxPrincipalTinybar: priceTinybar,
         maxTermSeconds: 3_600,
-        minimumReputation: 0.8,
-        feeBasisPoints: 500,
+        minReputationScore: 0.8,
+        feeBps: 500,
       }),
       fundingService,
       lenderAccountId,
@@ -428,6 +450,24 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     }).listen(0, "127.0.0.1");
     await listen(lenderServer);
     lenderUrl = serverOrigin(lenderServer);
+
+    const secondDatabase = openDatabase(join(directory, "lender-b.sqlite"));
+    extraDatabases.push(secondDatabase);
+    const secondStore = new LenderStore(secondDatabase);
+    const secondPolicy = new CompetitiveLenderPolicy({ maxPrincipalTinybar: budget, maxTermSeconds: 3600, minReputationScore: 0, feeBps: 900 });
+    const quoteSpy = vi.spyOn(secondPolicy, "evaluate");
+    const secondServer = createLenderApp({
+      store: secondStore, policy: secondPolicy,
+      fundingService: new FundingService({ store: secondStore, gateway: fundingGateway,
+        registrationClient: new HttpLoanRegistrationClient(signerUrl, "v".repeat(43)), lenderAccountId: secondLenderAccountId }),
+      lenderAccountId: secondLenderAccountId, lenderPrivateKey: secondLenderKey,
+      operatorCredential: "q".repeat(43),
+      borrowerPublicKey: account => account === consumerAccountId ? consumerKey.publicKey : undefined,
+      borrowerReputation: () => 0.9, now: () => new Date(clock).toISOString(), ...lenderZkOptions,
+    }).listen(0, "127.0.0.1");
+    extraServers.push(secondServer);
+    await listen(secondServer);
+    secondLenderUrl = serverOrigin(secondServer);
 
     let loseFirstCallbackResponse = true;
     const lossyCallbackFetch: typeof fetch = async (input, init) => {
@@ -470,6 +510,48 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     providerServer = paidScan.app.listen(providerPort, "127.0.0.1");
     await listen(providerServer);
 
+    const otherPort = await freePort();
+    const other = { ...provider, id: selected === "a" ? "provider-b" : "provider-a",
+      accountId: selected === "a" ? "0.0.3002" : "0.0.3001", endpoint: `http://127.0.0.1:${otherPort}`,
+      priceTinybar: selected === "a" ? 1_000_000n : 1_100_000n };
+    const otherStore = new ProviderStore(join(directory, "other-provider.sqlite"));
+    extraDatabases.push(otherStore.database);
+    const otherScan = await createPaidScanServer({
+      providerId: other.id, providerAccountId: other.accountId, scanUrl: `${other.endpoint}/scan`, amountTinybar: other.priceTinybar.toString(),
+      network: "hedera:testnet", asset: "0.0.0", signerPublicKeys: { [consumerAccountId]: consumerKey.publicKey.toStringRaw() },
+      facilitatorUrl: "https://facilitator.invalid", facilitatorClient: facilitator, store: otherStore,
+      settlementConfirmer: { confirm: async input => confirmTransfer({ transactionId: input.transactionId,
+        payerAccountId: input.payerAccountId, recipientAccountId: input.providerAccountId, amountTinybar: BigInt(input.amountTinybar) }) },
+      callbackUrl: `${orchestratorUrl}/callbacks/mission-complete`, callbackSecret: Buffer.alloc(32, 8),
+      dispatchCallbacks: false, reconcileSettlements: false,
+    });
+    extraProviders.push(otherScan);
+    const otherServer = otherScan.app.listen(otherPort, "127.0.0.1");
+    extraServers.push(otherServer);
+    await listen(otherServer);
+    const registry = new ProviderRegistry([provider, other].map(({ reputationScore: _score, ...record }) => ({ ...record, priceTinybar: record.priceTinybar.toString() })));
+    const directoryServer = createDirectoryApp({ database: history, registry }).listen(0, "127.0.0.1");
+    extraServers.push(directoryServer);
+    await listen(directoryServer);
+    const liveRanking = await new HttpProviderDirectory({ baseUrl: serverOrigin(directoryServer) }).rank({ capability: "solidity-scan", maxPriceTinybar: budget.toString() });
+    expect(liveRanking.ranked.map(item => item.provider.id)).toEqual([provider.id, other.id]);
+    const registrarDatabase = openDatabase(join(directory, "registrar.sqlite"));
+    extraDatabases.push(registrarDatabase);
+    const registrarApp = await createRegistrarApp({ database: registrarDatabase, eventDatabase: history, registry,
+      borrowerAccountId: consumerAccountId, operatorCredential: "z".repeat(43), orchestratorCredential: credentials.orchestrator,
+      targets: [new HttpMissionPolicyTarget({ baseUrl: signerUrl, credential: credentials.registrar }),
+        new HttpMissionPolicyTarget({ baseUrl: lenderUrl, credential: credentials.lenderOperator }),
+        new HttpMissionPolicyTarget({ baseUrl: secondLenderUrl, credential: "q".repeat(43) })],
+    });
+    const registrarServer = registrarApp.listen(0, "127.0.0.1");
+    extraServers.push(registrarServer);
+    await listen(registrarServer);
+    registrarUrl = serverOrigin(registrarServer);
+    const missionRequest = { prompt: "Audit the Solidity contract", maxBudgetTinybar: budget.toString(), targetRef: "Vault.sol",
+      source: "pragma solidity ^0.8.24; contract Vault { function value() external pure returns (uint256) { return 1; } }" };
+    expect((await fetch(`${registrarUrl}/missions/approve`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${"z".repeat(43)}` },
+      body: JSON.stringify({ missionId, request: missionRequest }) })).status).toBe(200);
+
     orchestratorDatabase = openDatabase(orchestratorPath);
     const initialOrchestratorServer = createOrchestrator(orchestratorDatabase)
       .listen(orchestratorPort, "127.0.0.1");
@@ -481,7 +563,7 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         prompt: "Audit the Solidity contract",
-        maxBudgetTinybar: priceTinybar.toString(10),
+        maxBudgetTinybar: budget.toString(10),
         targetRef: "Vault.sol",
         source: "pragma solidity ^0.8.24; contract Vault { function value() external pure returns (uint256) { return 1; } }",
       }),
@@ -489,6 +571,12 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     expect(createdResponse.status, await createdResponse.clone().text()).toBe(201);
     expect(MissionSchema.parse(await createdResponse.json()).state).toBe("running");
     expect(paymentTxId).toBeDefined();
+    expect(quoteSpy).toHaveBeenCalledTimes(1);
+    const rankingEvent = listMissionEvents<{ ranked: unknown[] }>(orchestratorDatabase, missionId).find(event => event.type === "offers-received");
+    expect(rankingEvent?.payload.ranked).toHaveLength(2);
+    expect(transfers.get(paymentTxId!)?.recipientAccountId).toBe(providerAccountId);
+    createEvent(history, { id: `success-${selected}`, missionId: `success-${selected}`, type: "report-received", payloadHash: "0".repeat(64),
+      payload: { providerId }, occurredAt: new Date(clock).toISOString() });
     const loan = getLoanByMission(orchestratorDatabase, missionId);
     expect(loan?.state).toBe("funded");
     expect(signerStore.getLoan(loan!.id)?.state).toBe("funded");
@@ -497,6 +585,10 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     const singletonRoot = buildMerkleTree([providerAccountId], poseidon).root;
     expect(getMission(orchestratorDatabase, missionId)?.approvedRecipientsRoot).toBe(singletonRoot);
     expect(signerStore.getMissionPolicy(missionId)?.approvedRecipientsRoot).toBe(singletonRoot);
+    expect(lenderStore.getMissionPolicy(missionId)?.approvedRecipientsRoot).toBe(singletonRoot);
+    expect(secondStore.getMissionPolicy(missionId)?.approvedRecipientsRoot).toBe(singletonRoot);
+    expect(fundingGateway.transfer).toHaveBeenCalledTimes(1);
+    expect(eventOrder(orchestratorDatabase, missionId, "offers-received")).toBeLessThan(eventOrder(orchestratorDatabase, missionId, "offer-accepted"));
     const eventTypes = listMissionEvents(orchestratorDatabase, missionId).map(event => event.type);
     expect(eventTypes.includes("proof-generated")).toBe(proofMode === "zk");
     if (proofMode === "zk") {
@@ -599,12 +691,15 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       `https://hashscan.io/testnet/transaction/${repaymentTxId}`,
     ]);
   } finally {
-    await Promise.all([
+    extraProviders.forEach(runtime => { runtime.callbacks.stop(); runtime.settlements.stop(); });
+    await Promise.allSettled([
+      ...extraServers.map(close),
       close(orchestratorServer),
       close(providerServer),
       close(lenderServer),
       close(signerServer),
     ]);
+    extraDatabases.forEach(database => { if (database.open) database.close(); });
     if (orchestratorDatabase?.open) orchestratorDatabase.close();
     if (lenderDatabase?.open) lenderDatabase.close();
     providerStore?.close();

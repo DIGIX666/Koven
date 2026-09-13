@@ -116,6 +116,15 @@ export function buildMerkleTree(accountIds: readonly string[], poseidon: FieldHa
   };
 }
 
+/**
+ * Builds the approved-recipient root for a mission after provider selection.
+ * The selected provider is deliberately the only approved recipient: ranking
+ * candidates must never become alternative payment recipients.
+ */
+export function buildMissionRecipientRoot(providerAccountId: string, poseidon: FieldHasher): string {
+  return buildMerkleTree([providerAccountId], poseidon).root;
+}
+
 /** Every value crossing the Circom boundary is a canonical decimal string. */
 export interface CircuitInput {
   readonly amount: string;
