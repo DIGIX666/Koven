@@ -1,6 +1,6 @@
 import type { CreditOffer } from "@koven/domain";
 
-import { filterCandidates, selectBest, type Criterion } from "./select.js";
+import { compareIds, filterCandidates, selectBest, type Criterion } from "./select.js";
 
 export interface OfferSelectionInput {
   readonly requiredPrincipalTinybar: bigint;
@@ -102,7 +102,7 @@ export function selectCreditOffer(
       score: offer => (Date.parse(offer.expiresAt) - nowMs) / maximumRemainingTime,
     },
   ];
-  const selection = selectBest(eligible, criteria, (left, right) => left.id.localeCompare(right.id));
+  const selection = selectBest(eligible, criteria, (left, right) => compareIds(left.id, right.id));
   if (selection === null) return null;
 
   return {

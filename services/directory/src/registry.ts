@@ -1,3 +1,4 @@
+import { compareIds } from "@koven/policy";
 import type { Provider } from "@koven/domain";
 import { ProviderSchema } from "@koven/schemas";
 import { z } from "zod";
@@ -17,7 +18,7 @@ export class ProviderRegistry {
     if (ids.size !== parsed.length) throw new Error("Provider ids must be unique");
     this.providers = parsed
       .map(record => ({ ...record, priceTinybar: BigInt(record.priceTinybar) }))
-      .sort((left, right) => left.id.localeCompare(right.id));
+      .sort((left, right) => compareIds(left.id, right.id));
   }
 
   list(): ProviderRecord[] {

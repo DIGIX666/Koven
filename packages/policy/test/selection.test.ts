@@ -184,3 +184,13 @@ describe("credit offer selection", () => {
     expect(new Set(winners)).toEqual(new Set(["offer-a"]));
   });
 });
+
+it("breaks provider and offer ties in ASCII order for every input permutation", () => {
+  const ids = ["A", "a", "a-", "a.", "a_"];
+  for (const order of permutations(ids)) {
+    expect(rankProviders(order.map(id => provider({ id })), { capability: "solidity-scan", maxPriceTinybar: 100n })
+      .map(item => item.provider.id)).toEqual(ids);
+    expect(selectCreditOffer(order.map(id => offer({ id })), { requiredPrincipalTinybar: 300_000_000n,
+      now: "2026-09-13T10:00:00.000Z", verifySignature: () => true })?.ranked.map(item => item.offer.id)).toEqual(ids);
+  }
+});

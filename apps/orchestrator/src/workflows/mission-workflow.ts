@@ -98,7 +98,7 @@ export class MissionWorkflow {
     const discovery = await this.options.providerDirectory.rank({
       capability: "solidity-scan",
       maxPriceTinybar: spendingCapTinybar.toString(10),
-    });
+    }, id);
     const ranked = discovery.ranked;
     const selected = ranked[0];
     if (selected === undefined) throw new Error("No provider matched the mission requirements");
@@ -178,6 +178,12 @@ export class MissionWorkflow {
         {
           onProgress: async event => {
             switch (event.type) {
+              case "offers-received":
+                await this.options.stateMachine.record(id, {
+                  type: "offers-received",
+                  payload: { ranked: event.ranked, selectedOfferId: event.selectedOfferId },
+                });
+                return;
               case "proof-generated":
                 // Proven before credit: an audit fact, not a stored state.
                 await this.options.stateMachine.record(id, {
@@ -190,6 +196,9 @@ export class MissionWorkflow {
                 });
                 return;
               case "credit-requested":
+                await this.options.stateMachine.record(id, {
+                  type: "providers-ranked", payload: { ranked, formula: discovery.formula },
+                });
                 await move("credit-requested", "credit-requested", {
                   requestId: event.request.id,
                   principalTinybar: event.request.principalTinybar,

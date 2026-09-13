@@ -11,7 +11,7 @@ export interface ProviderRankingResult {
 }
 
 export interface ProviderDirectory {
-  rank(input: HttpRequest<"rankProviders">): Promise<ProviderRankingResult>;
+  rank(input: HttpRequest<"rankProviders">, missionId?: string): Promise<ProviderRankingResult>;
 }
 
 export class ProviderDirectoryError extends Error {
@@ -29,6 +29,7 @@ export interface HttpProviderDirectoryOptions {
   readonly baseUrl: string;
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
+  readonly credential?: string;
 }
 
 function trustedOrigin(value: string): URL {
@@ -58,8 +59,11 @@ export class HttpProviderDirectory implements ProviderDirectory {
   private readonly fetchImplementation: typeof fetch;
   private readonly timeoutMs: number;
 
-  constructor(options: HttpProviderDirectoryOptions) {
+  constructor(private readonly options: HttpProviderDirectoryOptions) {
     this.baseUrl = trustedOrigin(options.baseUrl);
+    if (options.credential !== undefined && !/^[A-Za-z0-9_-]{43,}$/.test(options.credential)) {
+      throw new Error("Invalid registrar client credential");
+    }
     this.fetchImplementation = options.fetch ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 30_000;
     if (!Number.isInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 120_000) {
@@ -67,14 +71,16 @@ export class HttpProviderDirectory implements ProviderDirectory {
     }
   }
 
-  async rank(input: HttpRequest<"rankProviders">): Promise<ProviderRankingResult> {
+  async rank(input: HttpRequest<"rankProviders">, missionId?: string): Promise<ProviderRankingResult> {
     const url = new URL("/providers/rank", this.baseUrl);
+    if (missionId !== undefined) url.searchParams.set("missionId", missionId);
     url.searchParams.set("capability", input.capability);
     url.searchParams.set("maxPriceTinybar", input.maxPriceTinybar);
     let response: Response;
     try {
       response = await this.fetchImplementation(url, {
         method: "GET",
+        headers: this.options.credential === undefined ? {} : { authorization: `Bearer ${this.options.credential}` },
         redirect: "error",
         signal: AbortSignal.timeout(this.timeoutMs),
       });

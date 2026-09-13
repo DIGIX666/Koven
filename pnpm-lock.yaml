@@ -24,9 +24,18 @@ importers:
       '@eslint/js':
         specifier: 9.35.0
         version: 9.35.0
+      '@koven/directory':
+        specifier: workspace:*
+        version: link:services/directory
       '@koven/hedera':
         specifier: workspace:*
         version: link:packages/hedera
+      '@koven/lender-agents':
+        specifier: workspace:*
+        version: link:agents/lenders
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:packages/persistence
       '@koven/resource-server':
         specifier: workspace:*
         version: link:services/resource-server
@@ -319,6 +328,12 @@ importers:
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       express:
         specifier: 5.1.0
         version: 5.1.0
@@ -418,6 +433,9 @@ importers:
       '@koven/consumer-agent':
         specifier: workspace:*
         version: link:../../agents/consumer
+      '@koven/directory':
+        specifier: workspace:*
+        version: link:../../services/directory
       '@koven/domain':
         specifier: workspace:*
         version: link:../../packages/domain

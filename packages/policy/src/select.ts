@@ -1,3 +1,6 @@
+/** UTF-16 code-unit order; for protocol ASCII ids this is byte lexical order. */
+export const compareIds = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+
 export interface Criterion<T> {
   readonly key: string;
   readonly weight: number;

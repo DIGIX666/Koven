@@ -533,6 +533,7 @@ describe("ConsumerMissionExecutor", () => {
       "sign-request",
       "credit-requested",
       "quote",
+      "offers-received",
       "sign-acceptance",
       "accept",
       "accept",
@@ -541,7 +542,7 @@ describe("ConsumerMissionExecutor", () => {
       "payment-preparation",
       "pay",
     ]);
-    expect(progress).toHaveBeenCalledTimes(4);
+    expect(progress).toHaveBeenCalledTimes(5);
     expect(progress).toHaveBeenNthCalledWith(1, {
       type: "proof-generated",
       nonce: "7",
@@ -597,6 +598,7 @@ describe("ConsumerMissionExecutor", () => {
 
     expect(progress.mock.calls.map(([event]) => event.type)).toEqual([
       "credit-requested",
+      "offers-received",
       "funded",
       "payment-preparation",
     ]);

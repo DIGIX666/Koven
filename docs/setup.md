@@ -341,3 +341,62 @@ requires the testnet facilitator/mirror URLs shown above and rejects conflicting
 network/asset settings. It does not exercise the later scan authorization gate.
 
 API reference: [Blocky402 facilitator endpoints](https://blocky402.com/docs/api-reference/).
+
+## Local competition services and trusted registration
+
+Copy the new lender ports, database paths and service credentials from `.env.example`.
+The two lender signer credentials must match the account entries in the signer's
+credential map. Each lender registrar credential is distinct. Set the borrower
+public key and the configured demo reputation; lender processes receive only their
+own private key. Starting a lender does not submit a funding transaction.
+
+Run these commands in separate terminals from the repository root:
+
+```sh
+pnpm dev:providers
+pnpm dev:lenders
+pnpm dev:directory
+pnpm dev:registrar
+```
+
+The directory and registrar load the same provider metadata from the role fields
+in `.env`. An optional JSON registry file can replace those fields. Reputation is
+computed from the lifecycle event database. The registrar stores operator approvals
+and their frozen ranking in its own database, which must not be writable by the
+orchestrator. Service launchers bind to loopback.
+
+The operator first sends `POST /missions/approve` to the registrar with its operator
+credential and `{ "missionId": "…", "request": { … } }`, where `request` is the
+mission creation request. The mission ID must be the ID assigned to the workflow.
+The approval fixes borrower, source, budget, session, provider and singleton root.
+Only the operator and registrar receive the approval credential. Only the registrar
+and the target service receive each target's registration credential.
+
+Configure the workflow's directory and policy client with the registrar origin and
+the orchestrator credential. Ranking reads include the mission ID and return the
+approved snapshot. `POST /missions/provision` accepts only the exact approved policy;
+the registrar sends its stored policy to the signer and both lenders. Retries after
+partial provisioning use the same immutable approval, even after a registrar restart
+or a change in reputation. Do not inject signer or lender registrar credentials into
+the orchestrator process.
+
+The offline end-to-end suite starts two providers, two lenders, a directory and a
+registrar for each mission. It pays the cheaper provider, adds controlled lifecycle
+failures to the shared reputation history, then pays the other provider. Both real
+lenders quote each mission; all eligible offers and their scores are persisted in
+the local audit before acceptance. Both missions exercise callback replay and
+repayment idempotency. The artifact suite repeats this with proof enforcement.
+
+The explicit `pnpm test:e2e:testnet` command performs the corresponding two missions
+on testnet and spends test HBAR. Configure both provider accounts, both lender keys,
+and distinct ports, including the dedicated lender and registrar ports. Prices and
+latencies from `.env.example` with a budget covering both prices support the expected
+provider switch. The injected failures are test fixtures, not reported live outages.
+Each mission writes a separate recovery directory with provider selection metadata;
+set `KOVEN_TESTNET_RESUME_DIRECTORY` to that directory to resume callback recovery
+without creating another mission. To finish a competition run interrupted after
+provider B closed, combine that resume directory with
+`KOVEN_TESTNET_CONTINUE_COMPETITION=1`: the existing callback is replayed and only
+the provider A mission is created. The reference scenario injects eight failures
+and saves its reputation history alongside the recovery databases. Local validation
+does not execute this command.

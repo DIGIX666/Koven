@@ -97,7 +97,7 @@ export async function startProviderInstances(
     }
   } catch (error) {
     await Promise.allSettled(listeners.map(closeServer));
-    runtimes.forEach(runtime => runtime.close());
+    await Promise.allSettled(runtimes.map(async runtime => runtime.close()));
     throw error;
   }
 
@@ -108,8 +108,10 @@ export async function startProviderInstances(
       port: runtime.port,
     })),
     async close(): Promise<void> {
-      await Promise.all(listeners.map(closeServer));
-      runtimes.forEach(runtime => runtime.close());
+      const listenersClosed = await Promise.allSettled(listeners.map(closeServer));
+      const runtimesClosed = await Promise.allSettled(runtimes.map(async runtime => runtime.close()));
+      const failures = [...listenersClosed, ...runtimesClosed].filter(result => result.status === "rejected");
+      if (failures.length) throw new AggregateError(failures.map(result => result.reason), "Provider cleanup failed");
     },
   };
 }

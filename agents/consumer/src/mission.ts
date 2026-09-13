@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { canonicalHash, type SignedCreditAcceptance } from "@koven/credit-protocol";
 import { ErrorCode, type CreditOffer, type CreditRequest, type Provider, type ScanRequest } from "@koven/domain";
-import { selectCreditOffer } from "@koven/policy";
+import { selectCreditOffer, type RankedCreditOffer } from "@koven/policy";
 import { ProviderSchema, ScanRequestSchema, TinybarString } from "@koven/schemas";
 
 import {
@@ -42,6 +42,7 @@ export interface ConsumerMissionResult {
 
 export type ConsumerMissionProgress =
   | { readonly type: "payment-preparation" }
+  | { readonly type: "offers-received"; readonly ranked: readonly RankedCreditOffer[]; readonly selectedOfferId: string }
   | {
     /** M3: the policy proof bound to the payment intent, produced before credit acceptance. */
     readonly type: "proof-generated";
@@ -164,7 +165,8 @@ export class ConsumerMissionExecutor {
       try {
         const request = await this.options.signer.signCreditRequest(unsigned);
         await observer?.onProgress({ type: "credit-requested", request });
-        const { lender, offer } = await this.selectLender(request);
+        const { lender, offer, ranked } = await this.selectLender(request);
+        await observer?.onProgress({ type: "offers-received", ranked, selectedOfferId: offer.id });
         const evidence: CreditEvidence = prepared.bundle !== undefined
           ? { paymentIntent: paymentIntentWire(prepared.intent), paymentProofBundle: prepared.bundle }
           : (input.creditEvidence ?? {});
@@ -185,6 +187,7 @@ export class ConsumerMissionExecutor {
   private async selectLender(request: CreditRequest): Promise<{
     lender: ConsumerLender;
     offer: CreditOffer;
+    ranked: readonly RankedCreditOffer[];
   }> {
     const responses = await Promise.all(this.options.lenders.map(async lender => {
       try {
@@ -210,7 +213,7 @@ export class ConsumerMissionExecutor {
     }
     const selected = candidates.find(candidate => candidate.offer === selection.winner);
     if (selected === undefined) throw new Error("Selected offer has no lender client");
-    return selected;
+    return { ...selected, ranked: selection.ranked };
   }
 
   private async awaitFunding(

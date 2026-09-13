@@ -25,6 +25,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. --project @koven/lender-agents --passWithNoTests",
-    "test:artifacts": "vitest run --config vitest.artifacts.config.ts"
+    "test:artifacts": "vitest run --config vitest.artifacts.config.ts",
+    "dev": "pnpm --dir ../.. dev:lenders"
   }
 }

@@ -16,7 +16,11 @@
     "zk:setup-release": "pnpm --filter @koven/zk-policy setup-release",
     "zk:test": "pnpm --recursive --if-present test:artifacts",
     "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
-    "test:scripts": "tsx --test scripts/test/*.test.ts"
+    "test:scripts": "tsx --test scripts/test/*.test.ts",
+    "dev:lenders": "tsx scripts/run-lenders.ts",
+    "dev:directory": "tsx scripts/run-directory.ts",
+    "dev:registrar": "tsx scripts/run-directory.ts --registrar",
+    "dev:providers": "tsx scripts/run-providers.ts"
   },
   "engines": {
     "node": ">=20"
@@ -32,7 +36,10 @@
     "eslint": "9.35.0",
     "@eslint/js": "9.35.0",
     "typescript-eslint": "8.42.0",
-    "globals": "16.3.0"
+    "globals": "16.3.0",
+    "@koven/lender-agents": "workspace:*",
+    "@koven/directory": "workspace:*",
+    "@koven/persistence": "workspace:*"
   },
   "type": "module",
   "packageManager": "pnpm@10.6.5",

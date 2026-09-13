@@ -6,7 +6,7 @@ import {
   type HttpRequest,
 } from "@koven/schemas";
 
-import type { MissionPolicyRegistrar } from "./mission-workflow.js";
+
 
 const SERVICE_CREDENTIAL = /^[A-Za-z0-9_-]{43,}$/;
 
@@ -32,20 +32,20 @@ function trustedOrigin(value: string): URL {
   return url;
 }
 
-export interface HttpMissionPolicyRegistrarOptions {
+export interface HttpMissionPolicyTargetOptions {
   readonly baseUrl: string;
   readonly credential: string;
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
 }
 
-/** Proposes a policy to the independent registrar using the orchestrator credential. */
-export class HttpMissionPolicyRegistrar implements MissionPolicyRegistrar {
+/** Provisions the immutable mission policy through an authenticated service boundary. */
+export class HttpMissionPolicyTarget {
   private readonly baseUrl: URL;
   private readonly fetchImplementation: typeof fetch;
   private readonly timeoutMs: number;
 
-  constructor(private readonly options: HttpMissionPolicyRegistrarOptions) {
+  constructor(private readonly options: HttpMissionPolicyTargetOptions) {
     this.baseUrl = trustedOrigin(options.baseUrl);
     if (!SERVICE_CREDENTIAL.test(options.credential)) throw new Error("Invalid policy registrar credential");
     this.fetchImplementation = options.fetch ?? fetch;
@@ -59,7 +59,7 @@ export class HttpMissionPolicyRegistrar implements MissionPolicyRegistrar {
     const policy = MissionPolicyRequestSchema.parse(input);
     let response: Response;
     try {
-      response = await this.fetchImplementation(new URL("/missions/provision", this.baseUrl), {
+      response = await this.fetchImplementation(new URL("/internal/missions/register", this.baseUrl), {
         method: "POST",
         headers: {
           authorization: `Bearer ${this.options.credential}`,

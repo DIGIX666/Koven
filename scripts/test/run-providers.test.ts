@@ -97,3 +97,18 @@ test("provider launcher starts and closes both runtime instances", async () => {
   assert.equal(closes[0]!.mock.callCount(), 1);
   assert.equal(closes[1]!.mock.callCount(), 1);
 });
+
+test("provider cleanup closes every runtime even when listener and runtime shutdown fail", async () => {
+  const closes = [mock.fn(() => { throw new Error("runtime failed"); }), mock.fn()];
+  let index = 0;
+  const running = await startProviderInstances(source, async () => {
+    const current = index++;
+    return { host: "127.0.0.1", port: 3000 + current,
+      listen: async () => ({ close: (callback: (error?: Error) => void) => callback(new Error("listener failed")) }),
+      close: closes[current],
+    } as unknown as PaidScanRuntime;
+  });
+  await assert.rejects(running.close(), AggregateError);
+  assert.equal(closes[0]!.mock.callCount(), 1);
+  assert.equal(closes[1]!.mock.callCount(), 1);
+});

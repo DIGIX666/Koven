@@ -1,6 +1,6 @@
 import type { Provider, RankedProvider } from "@koven/domain";
 
-import { filterCandidates, selectBest, type Criterion } from "./select.js";
+import { compareIds, filterCandidates, selectBest, type Criterion } from "./select.js";
 
 export interface ProviderRankingInput {
   readonly capability: string;
@@ -63,7 +63,7 @@ export function rankProviders(
       score: provider => 1 / (1 + provider.expectedLatencyMs / 1_000),
     },
   ];
-  const selection = selectBest(eligible, criteria, (left, right) => left.id.localeCompare(right.id));
+  const selection = selectBest(eligible, criteria, (left, right) => compareIds(left.id, right.id));
   if (selection === null) return [];
 
   return selection.ranked.map(({ candidate, score, breakdown }) => ({
