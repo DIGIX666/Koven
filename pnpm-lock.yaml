@@ -24,6 +24,9 @@ importers:
       '@eslint/js':
         specifier: 9.35.0
         version: 9.35.0
+      '@koven/audit':
+        specifier: workspace:*
+        version: link:packages/audit
       '@koven/directory':
         specifier: workspace:*
         version: link:services/directory
@@ -179,7 +182,15 @@ importers:
 
   apps/web: {}
 
-  packages/audit: {}
+  packages/audit:
+    dependencies:
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../hedera
+    devDependencies:
+      vitest:
+        specifier: 2.1.9
+        version: 2.1.9(@types/node@22.18.6)(terser@5.51.2)
 
   packages/config:
     dependencies:

@@ -6,6 +6,7 @@ import {
   type Context,
   type PostCoreActionParams,
 } from "@hashgraph/hedera-agent-kit";
+import { HcsAuditTrailHook } from "@hashgraph/hedera-agent-kit/hooks";
 import {
   coreAccountPluginToolNames,
   transferHbarTool,
@@ -93,16 +94,22 @@ export class AgentKitFundingGateway implements FundingGateway {
     private readonly client: Client,
     private readonly accountId: string,
     private readonly reconciler: Pick<FundingGateway, "reconcile">,
+    readonly auditTopicId?: string,
   ) {}
 
   async transfer(input: FundingTransfer): Promise<{ transactionId: string }> {
     if (input.fromAccountId !== this.accountId) {
       throw new CreditProtocolError(ErrorCode.FUNDING_MISMATCH, "Funding source is not the lender");
     }
+    const hooks: AbstractHook[] = [new PersistTransactionHook(this.accountId, input.onPrepared)];
+    // Agent Kit can attest this transfer because the lender owns the submitting key.
+    if (this.auditTopicId !== undefined) {
+      hooks.push(new HcsAuditTrailHook([this.toolName], this.auditTopicId, this.client));
+    }
     const context: Context = {
       mode: AgentMode.AUTONOMOUS,
       accountId: this.accountId,
-      hooks: [new PersistTransactionHook(this.accountId, input.onPrepared)],
+      hooks,
     };
     const tool = transferHbarTool(context);
     const result = await tool.execute(this.client, context, {

@@ -85,6 +85,7 @@ credentials for local development.
 | `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered. Runs right after install, no artifacts needed |
 | `pnpm test:e2e` | Run the complete real-service vertical flow with deterministic offline network boundaries |
 | `pnpm test:e2e:testnet` | Run the same vertical flow on Hedera testnet and print funding, payment and repayment HashScan links |
+| `pnpm audit:flush` | Drain the current `DATABASE_URL` HCS outbox and fail if events remain after the configured timeout |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
 | `pnpm zk:test` | Run every workspace's artifact-bound suites (Policy V1 benchmark, proving and verification, the signer's real-proof gate, the lender's independent verification, the offline vertical flow with real proofs and zk-mode signer and lender) on the verified official artifacts; requires `pnpm zk:build` first |
 
@@ -118,10 +119,14 @@ HTTP services offline by default; its separate testnet command requires disposab
 funded credentials from `.env` and follows `SIGNER_PROOF_MODE` (`zk` proves every
 payment with the official artifacts; the signer and the lender each need their own
 `*_VERIFICATION_KEY_PATH` and `*_TRUSTED_VKEY_SHA256`). The testnet command performs real HBAR transfers
-and retains its timestamped SQLite evidence under `.koven-testnet/`; run it only
+and HCS audit submissions, then retains its timestamped SQLite evidence under `.koven-testnet/`; run it only
 with low-balance test accounts. If a run is interrupted after a transaction, resume
 that exact run without funding again with
 `KOVEN_TESTNET_RESUME_DIRECTORY=<printed-directory> pnpm test:e2e:testnet`.
+Set `AUDIT_SINK=noop` for an offline orchestrator. With `AUDIT_SINK=hcs`, the
+durable worker resumes pending events from SQLite. Run `pnpm audit:flush`
+against each service-owned `DATABASE_URL` before a demo shutdown when every
+pending audit reference must reach HCS.
 This build does not compile Circom artifacts.
 
 When adding a workspace, add its build configuration to the root `tsconfig.json`.

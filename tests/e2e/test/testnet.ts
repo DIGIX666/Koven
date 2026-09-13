@@ -11,6 +11,7 @@ import {
   HttpLender,
   ZkPolicyProver,
 } from "@koven/consumer-agent";
+import { HederaHcsPublisher } from "@koven/audit";
 import { createDirectoryApp, createRegistrarApp, HttpMissionPolicyTarget, ProviderRegistry } from "@koven/directory";
 import type { Provider } from "@koven/domain";
 import { createClient, explorerUrl, getBalanceTinybar, PrivateKey } from "@koven/hedera";
@@ -28,6 +29,7 @@ import {
 } from "@koven/lender-agents";
 import {
   CompletionHandler,
+  createOrchestratorAuditRuntime,
   createOrchestratorApp,
   HttpMissionPolicyRegistrar,
   HttpProviderDirectory,
@@ -36,6 +38,7 @@ import {
   MissionStateMachine,
   MissionWorkflow,
   RepaymentWorkflow,
+  type OrchestratorAuditRuntime,
 } from "@koven/orchestrator";
 import {
   createEvent,
@@ -208,8 +211,21 @@ let providerServer: Server | undefined;
 let orchestratorServer: Server | undefined;
 let lenderDatabase: KovenDatabase | undefined;
 let orchestratorDatabase: KovenDatabase | undefined;
+let orchestratorAudit: OrchestratorAuditRuntime | undefined;
 let providerStore: ProviderStore | undefined;
 let lenderClient: ReturnType<typeof createClient> | undefined;
+const auditMode = env.AUDIT_SINK ?? "hcs";
+if (auditMode !== "noop" && auditMode !== "hcs") throw new Error("AUDIT_SINK must be noop or hcs");
+const auditClient = auditMode === "hcs"
+  ? createClient({
+    HEDERA_NETWORK: "testnet",
+    HEDERA_OPERATOR_ID: required("HEDERA_OPERATOR_ID"),
+    HEDERA_OPERATOR_PRIVATE_KEY: required("HEDERA_OPERATOR_PRIVATE_KEY"),
+  })
+  : undefined;
+const flushOrchestratorAudit = async (): Promise<void> => {
+  if (orchestratorAudit !== undefined) await orchestratorAudit.flush(60_000);
+};
 
 try {
   if (resumeDirectory) {
@@ -273,6 +289,7 @@ try {
         lenderClient!,
         lenderAccountId,
         new MirrorNodeFundingReconciler(mirrorNodeUrl),
+        required("HCS_AUDIT_TOPIC_ID"),
       ),
       registrationClient: new HttpLoanRegistrationClient(signerUrl, lenderCredential),
       lenderAccountId,
@@ -306,6 +323,7 @@ try {
         otherLenderClient!,
         otherLenderAccountId,
         new MirrorNodeFundingReconciler(mirrorNodeUrl),
+        required("HCS_AUDIT_TOPIC_ID"),
       ),
       registrationClient: new HttpLoanRegistrationClient(signerUrl, otherLenderCredential),
       lenderAccountId: otherLenderAccountId,
@@ -340,7 +358,15 @@ try {
     credential: orchestratorCredential,
   });
   const createOrchestrator = (database: KovenDatabase) => {
-    const stateMachine = new MissionStateMachine(database, { write: async () => undefined });
+    orchestratorAudit = createOrchestratorAuditRuntime({
+      database,
+      mode: auditMode,
+      ...(auditMode === "hcs" ? {
+        publisher: new HederaHcsPublisher(auditClient!, required("HCS_AUDIT_TOPIC_ID")),
+      } : {}),
+    });
+    orchestratorAudit.start();
+    const stateMachine = new MissionStateMachine(database, orchestratorAudit.sink);
     const consumer = new ConsumerMissionExecutor({
       borrowerAccountId: consumerAccountId,
       // Exercise credit deliberately; the balance preflight above reserves repayment funds.
@@ -533,6 +559,7 @@ try {
       || !completion) {
       throw new Error("Closed mission replay did not preserve the existing repayment");
     }
+    await flushOrchestratorAudit();
     process.stdout.write(`${JSON.stringify({
       missionId,
       state: "closed",
@@ -567,6 +594,8 @@ try {
 
   await closeServer(orchestratorServer);
   orchestratorServer = undefined;
+  orchestratorAudit?.stop();
+  orchestratorAudit = undefined;
   orchestratorDatabase.close();
   orchestratorDatabase = openDatabase(resolve(runDirectory, "orchestrator.db"));
   orchestratorServer = createOrchestrator(orchestratorDatabase).listen(orchestratorPort, "127.0.0.1");
@@ -616,6 +645,7 @@ try {
     throw new Error(`Proof audit evidence does not match the ${proofMode} signer mode`);
   }
 
+  await flushOrchestratorAudit();
   process.stdout.write(`${JSON.stringify({
     missionId,
     state: mission.state,
@@ -630,6 +660,7 @@ try {
   }, null, 2)}\n`);
   }
 } finally {
+  orchestratorAudit?.stop();
   paidScan?.callbacks.stop();
   paidScan?.settlements.stop();
   otherPaidScan?.callbacks.stop();
@@ -647,6 +678,7 @@ try {
   extraDatabases.forEach(database => { if (database.open) database.close(); });
   otherLenderClient?.close();
   lenderClient?.close();
+  auditClient?.close();
   signerRuntime?.close();
 }
 

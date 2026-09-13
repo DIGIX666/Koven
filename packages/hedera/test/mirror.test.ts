@@ -16,6 +16,13 @@ it("requests a bounded ascending base64 page and returns the cursor without foll
   expect(String(url)).toBe("https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.50/messages?encoding=base64&order=asc&limit=10&sequencenumber=gt%3A1");
   expect(init?.redirect).toBe("error");
 });
+
+it("reads from the start without a sequence filter, which the Mirror Node rejects at zero", async () => {
+  respond([row]);
+  expect(await getTopicMessages("0.0.50", { ...opts, limit: 10 })).toHaveLength(1);
+  expect(String(vi.mocked(fetch).mock.calls[0]![0]))
+    .toBe("https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.50/messages?encoding=base64&order=asc&limit=10");
+});
 it("fails closed on foreign topics, imprecise integers, unordered messages and chunks", async () => {
   for (const change of [{ topic_id: "0.0.999" }, { sequence_number: 9007199254740992 },
     { message: "not base64" }, { chunk_info: { total: 2, number: 1 } }, { chunk_info: { total: 1, number: 2 } }]) {
