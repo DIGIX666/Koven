@@ -175,6 +175,82 @@ export const MIGRATIONS: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 3,
+    name: "durable-hcs-audit-outbox",
+    sql: `
+      ALTER TABLE events ADD COLUMN hcs_transaction_id TEXT;
+      ALTER TABLE events ADD COLUMN hcs_sequence_number TEXT CHECK (
+        hcs_sequence_number IS NULL OR (
+          hcs_sequence_number GLOB '[1-9]*' AND
+          hcs_sequence_number NOT GLOB '*[^0-9]*'
+        )
+      );
+
+      CREATE TABLE hcs_audit_outbox (
+        event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+        mission_id TEXT NOT NULL,
+        envelope_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'processing', 'published')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        next_attempt_at INTEGER NOT NULL,
+        lease_token TEXT,
+        lease_until INTEGER,
+        transaction_id TEXT UNIQUE,
+        transaction_base64 TEXT,
+        valid_until INTEGER,
+        submission_attempted INTEGER NOT NULL DEFAULT 0
+          CHECK (submission_attempted IN (0, 1)),
+        last_error TEXT,
+        hcs_sequence_number TEXT CHECK (
+          hcs_sequence_number IS NULL OR (
+            hcs_sequence_number GLOB '[1-9]*' AND
+            hcs_sequence_number NOT GLOB '*[^0-9]*'
+          )
+        ),
+        published_at TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (transaction_id IS NULL AND transaction_base64 IS NULL AND valid_until IS NULL)
+          OR
+          (transaction_id IS NOT NULL AND transaction_base64 IS NOT NULL AND valid_until IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE INDEX hcs_audit_outbox_due_idx
+        ON hcs_audit_outbox (status, next_attempt_at);
+      CREATE INDEX hcs_audit_outbox_mission_idx
+        ON hcs_audit_outbox (mission_id, status);
+
+      INSERT INTO hcs_audit_outbox (
+        event_id, mission_id, envelope_json, status, next_attempt_at,
+        created_at, updated_at, published_at
+      )
+      SELECT
+        id,
+        mission_id,
+        CASE WHEN transaction_id IS NULL THEN
+          json_object(
+            'v', 1, 'eventId', id, 'missionId', mission_id, 'type', type,
+            'payloadHash', payload_hash, 'occurredAt', occurred_at
+          )
+        ELSE
+          json_object(
+            'v', 1, 'eventId', id, 'missionId', mission_id, 'type', type,
+            'payloadHash', payload_hash, 'transactionId', transaction_id,
+            'occurredAt', occurred_at
+          )
+        END,
+        CASE WHEN published_at IS NULL THEN 'pending' ELSE 'published' END,
+        unixepoch(occurred_at) * 1000,
+        unixepoch(occurred_at) * 1000,
+        unixepoch(occurred_at) * 1000,
+        published_at
+      FROM events;
+    `,
+  },
 ] as const;
 
 interface AppliedMigrationRow {

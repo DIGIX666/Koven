@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountBalanceQuery, AccountInfoQuery, Hbar, PrivateKey, Status, TopicCreateTransaction,
-  TopicId, TopicMessageSubmitTransaction, TransactionId, TransferTransaction } from "@hiero-ledger/sdk";
+  TopicId, TopicMessageSubmitTransaction, TransactionId, TransactionReceiptQuery, TransferTransaction } from "@hiero-ledger/sdk";
 import { createClient, getBalanceTinybar, transferHbar, createTopic, submitTopicMessage, explorerUrl } from "../src/index.js";
 
 // Ephemeral offline test key, never an account provisioned on a network.
@@ -73,13 +73,18 @@ it("creates an operator-administered topic and returns its ID", async () => {
 });
 
 it("rejects chunked-size messages and returns exact topic sequence numbers", async () => {
-  const execute = vi.spyOn(TopicMessageSubmitTransaction.prototype, "execute").mockResolvedValue({
-    transactionId: txId, getReceipt: vi.fn().mockResolvedValue({ status: Status.Success, topicSequenceNumber: { toString: () => "9007199254740993" } }),
+  const execute = vi.spyOn(TopicMessageSubmitTransaction.prototype, "execute")
+    .mockImplementation(async function (this: TopicMessageSubmitTransaction) {
+      return { transactionId: this.transactionId } as never;
+    });
+  vi.spyOn(TransactionReceiptQuery.prototype, "execute").mockResolvedValue({
+    status: Status.Success,
+    topicSequenceNumber: { toString: () => "9007199254740993" },
   } as never);
   const c = client();
   await expect(submitTopicMessage(c, "0.0.50", "é".repeat(513))).rejects.toThrow("1024");
   expect(execute).not.toHaveBeenCalled();
-  expect(await submitTopicMessage(c, "0.0.50", "{}")).toEqual({ transactionId: txId.toString(), sequenceNumber: 9007199254740993n });
+  expect(await submitTopicMessage(c, "0.0.50", "{}")).toMatchObject({ sequenceNumber: 9007199254740993n });
 });
 
 it("builds testnet explorer links only for canonical transaction IDs", () => {

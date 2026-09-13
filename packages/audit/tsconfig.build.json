@@ -16,6 +16,9 @@
   "references": [
     {
       "path": "../../tsconfig.tools.json"
+    },
+    {
+      "path": "../hedera/tsconfig.build.json"
     }
   ]
 }

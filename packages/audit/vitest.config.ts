@@ -3,5 +3,9 @@ import { defineProject, mergeConfig } from "vitest/config";
 import shared from "../../vitest.config.js";
 
 export default mergeConfig(shared, defineProject({
-  test: { name: "@koven/audit", root: fileURLToPath(new URL(".", import.meta.url)) },
+  test: {
+    name: "@koven/audit",
+    root: fileURLToPath(new URL(".", import.meta.url)),
+    exclude: ["test/**/*.integration.test.ts"],
+  },
 }));

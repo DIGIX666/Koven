@@ -27,4 +27,8 @@ export interface HcsEventEnvelope {
   v: 1; eventId: string; missionId: string; type: AuditEventType;
   payloadHash: string; transactionId?: string; occurredAt: string;
 }
-export interface AuditSink { write(event: AuditEvent): Promise<void>; }
+export interface AuditSink { write(event: AuditEvent): Promise<void>; readonly durable?: boolean; }
+
+export * from "./hash.js";
+export * from "./hedera.js";
+export * from "./writer.js";

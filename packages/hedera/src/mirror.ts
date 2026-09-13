@@ -52,16 +52,23 @@ export async function getTopicMessages(topicId: string, opts: TopicMessagesOptio
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error("Mirror timeout must be 1–60000 ms");
   if (typeof after !== "bigint" || after < 0n || after > 9223372036854775807n) throw new Error("Invalid sequence cursor");
   const url = new URL(`/api/v1/topics/${topicId}/messages`, base);
-  url.searchParams.set("encoding", "base64");
-  url.searchParams.set("order", "asc");
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("sequencenumber", `gt:${after}`);
+  // The current Mirror Node REST API does not accept a sequence-number query
+  // filter. Read the exact next sequence when resuming from a durable cursor.
+  if (after > 0n) {
+    url.pathname += `/${after + 1n}`;
+  } else {
+    url.searchParams.set("encoding", "base64");
+    url.searchParams.set("order", "asc");
+    url.searchParams.set("limit", String(limit));
+  }
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
+  if (response.status === 404 && after > 0n) return [];
   if (!response.ok) throw new Error(`Mirror request failed with HTTP ${response.status}`);
   const body = record(await response.json());
-  if (!Array.isArray(body.messages) || body.messages.length > limit) throw new Error("Invalid mirror message list");
+  const messages = after > 0n ? [body] : body.messages;
+  if (!Array.isArray(messages) || messages.length > limit) throw new Error("Invalid mirror message list");
   let previous = after;
-  return body.messages.map((entry: unknown) => {
+  return messages.map((entry: unknown) => {
     const row = record(entry);
     if (row.topic_id !== topicId || typeof row.payer_account_id !== "string"
         || typeof row.consensus_timestamp !== "string" || !/^\d+\.\d{9}$/.test(row.consensus_timestamp)) {
