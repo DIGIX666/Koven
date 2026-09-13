@@ -14,6 +14,7 @@ import {
   LenderStore,
   type FundingGateway,
   type FundingTransfer,
+  type LenderPolicy,
   type LenderProofMode,
   type LenderProofVerifier,
   type LoanRegistrationClient,
@@ -77,6 +78,9 @@ export interface RuntimeOptions {
   clock?: () => string;
   proofMode?: LenderProofMode;
   proofVerifier?: LenderProofVerifier;
+  lenderAccountId?: string;
+  lenderPrivateKey?: PrivateKey;
+  lenderPolicy?: LenderPolicy;
 }
 
 export interface LenderRuntime {
@@ -94,24 +98,26 @@ export const runtime = (options: RuntimeOptions = {}): LenderRuntime => {
   const gateway = options.gateway ?? new FakeFundingGateway();
   const registration = options.registration ?? new FakeRegistrationClient();
   const clock = options.clock ?? (() => now);
+  const lenderAccountId = options.lenderAccountId ?? "0.0.20";
+  const lenderPrivateKey = options.lenderPrivateKey ?? lenderKey;
   const fundingService = new FundingService({
     store,
     gateway,
     registrationClient: registration,
-    lenderAccountId: "0.0.20",
+    lenderAccountId,
     now: clock,
   });
   const app = createLenderApp({
     store,
-    policy: new ConservativeLenderPolicy({
+    policy: options.lenderPolicy ?? new ConservativeLenderPolicy({
       maxPrincipalTinybar: options.maxPrincipalTinybar ?? 1_000n,
       maxTermSeconds: 7_200,
-      minimumReputation: 0.8,
-      feeBasisPoints: 500,
+      minReputationScore: 0.8,
+      feeBps: 500,
     }),
     fundingService,
-    lenderAccountId: "0.0.20",
-    lenderPrivateKey: lenderKey,
+    lenderAccountId,
+    lenderPrivateKey,
     operatorCredential,
     borrowerPublicKey: accountId => accountId === "0.0.10" ? borrowerKey.publicKey : undefined,
     borrowerReputation: () => options.reputation ?? 0.9,

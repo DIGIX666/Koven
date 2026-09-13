@@ -1,2 +1,16 @@
-[]
-
+[
+  {
+    "name": "conservative",
+    "maxPrincipalTinybar": "500000000",
+    "feeBps": 200,
+    "maxTermSeconds": 600,
+    "minReputationScore": 0.7
+  },
+  {
+    "name": "competitive",
+    "maxPrincipalTinybar": "2500000000",
+    "feeBps": 500,
+    "maxTermSeconds": 1800,
+    "minReputationScore": 0.4
+  }
+]

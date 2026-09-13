@@ -247,8 +247,8 @@ try {
       policy: new ConservativeLenderPolicy({
         maxPrincipalTinybar: spendingCapTinybar,
         maxTermSeconds: 3_600,
-        minimumReputation: 0,
-        feeBasisPoints: 100,
+        minReputationScore: 0,
+        feeBps: 100,
       }),
       fundingService,
       lenderAccountId,

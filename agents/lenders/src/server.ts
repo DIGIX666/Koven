@@ -203,7 +203,7 @@ export function createLenderApp(options: LenderAppOptions): Application {
     }
     const expiresAt = new Date(Date.parse(now()) + offerValiditySeconds * 1_000).toISOString();
     const terms = {
-      id: `offer-${canonicalHash(creditRequest).slice(0, 32)}`,
+      id: `offer-${canonicalHash({ request: creditRequest, lenderAccountId: options.lenderAccountId }).slice(0, 32)}`,
       requestId: creditRequest.id,
       lenderAccountId: options.lenderAccountId,
       principalTinybar: creditRequest.principalTinybar,

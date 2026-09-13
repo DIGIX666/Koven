@@ -414,8 +414,8 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       policy: new ConservativeLenderPolicy({
         maxPrincipalTinybar: priceTinybar,
         maxTermSeconds: 3_600,
-        minimumReputation: 0.8,
-        feeBasisPoints: 500,
+        minReputationScore: 0.8,
+        feeBps: 500,
       }),
       fundingService,
       lenderAccountId,

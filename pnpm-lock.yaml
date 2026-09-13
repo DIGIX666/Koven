@@ -106,6 +106,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@types/express':
         specifier: 5.0.3
         version: 5.0.3
