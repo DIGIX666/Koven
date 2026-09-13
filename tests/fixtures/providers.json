@@ -1,2 +1,18 @@
-[]
-
+[
+  {
+    "id": "prov-a",
+    "accountId": "0.0.30",
+    "endpoint": "http://localhost:3003",
+    "capability": "solidity-scan",
+    "priceTinybar": "80000000",
+    "expectedLatencyMs": 4000
+  },
+  {
+    "id": "prov-b",
+    "accountId": "0.0.31",
+    "endpoint": "http://localhost:3013",
+    "capability": "solidity-scan",
+    "priceTinybar": "45000000",
+    "expectedLatencyMs": 9000
+  }
+]

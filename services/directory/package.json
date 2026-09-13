@@ -3,6 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@koven/audit": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/persistence": "workspace:*",
+    "@koven/policy": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "express": "5.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",

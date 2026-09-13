@@ -293,7 +293,33 @@ importers:
         specifier: 0.1.7
         version: 0.1.7
 
-  services/directory: {}
+  services/directory:
+    dependencies:
+      '@koven/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      express:
+        specifier: 5.1.0
+        version: 5.1.0
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/express':
+        specifier: 5.0.3
+        version: 5.0.3
 
   services/resource-server:
     dependencies:
