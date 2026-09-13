@@ -36,6 +36,31 @@ describe("loadPaidScanEnvironment", () => {
     expect(config).not.toHaveProperty("privateKey");
     expect(Object.isFrozen(config)).toBe(true);
     expect(config.host).toBe("127.0.0.1");
+    expect(config.expectedLatencyMs).toBe(0);
+    expect(config.scanFailureMode).toBe("none");
+  });
+
+  it("prefers generic per-process provider settings over legacy single-provider values", () => {
+    const config = loadPaidScanEnvironment({
+      ...valid,
+      PROVIDER_ID: "provider-b",
+      PORT: "3013",
+      PAY_TO: "0.0.2002",
+      PRICE_TINYBAR: "45000000",
+      LATENCY_MS: "9000",
+      SCAN_FAILURE_MODE: "malformed",
+      RESOURCE_SERVER_PUBLIC_URL: "http://127.0.0.1:3013",
+    });
+
+    expect(config).toMatchObject({
+      providerId: "provider-b",
+      providerAccountId: "0.0.2002",
+      amountTinybar: "45000000",
+      port: 3013,
+      expectedLatencyMs: 9000,
+      scanFailureMode: "malformed",
+      scanUrl: "http://127.0.0.1:3013/scan",
+    });
   });
 
   it("binds to the configured interface and rejects hosts carrying a scheme, port or path", () => {
@@ -56,5 +81,13 @@ describe("loadPaidScanEnvironment", () => {
       CONSUMER_PUBLIC_KEY: "not-a-key",
       CALLBACK_SECRET: "c2hvcnQ",
     })).toThrowError(/CALLBACK_SECRET.*CONSUMER_PUBLIC_KEY.*PROVIDER_A_PRICE_TINYBAR.*RESOURCE_SERVER_PUBLIC_URL.*X402_FACILITATOR_URL/);
+  });
+
+  it("rejects unsupported latency and failure controls", () => {
+    expect(() => loadPaidScanEnvironment({
+      ...valid,
+      LATENCY_MS: "60001",
+      SCAN_FAILURE_MODE: "corrupt",
+    })).toThrowError(/LATENCY_MS.*SCAN_FAILURE_MODE/);
   });
 });

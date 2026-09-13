@@ -35,6 +35,8 @@ export async function createPaidScanRuntime(
       settlementConfirmer: new MirrorSettlementConfirmer({ mirrorNodeUrl: config.mirrorNodeUrl }),
       callbackUrl: config.callbackUrl,
       callbackSecret: config.callbackSecret,
+      expectedLatencyMs: config.expectedLatencyMs,
+      scanFailureMode: config.scanFailureMode,
     });
     return {
       ...server,

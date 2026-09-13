@@ -84,9 +84,9 @@ ZK_CIRCUIT_ID=koven-policy-v1
 
 `0.0.0` identifies HBAR in the payment requirements; amounts are decimal tinybar
 strings (1 HBAR = 100,000,000 tinybars). Set `X402_PAY_TO_ACCOUNT_ID` to the same
-numeric ID as `PROVIDER_A_ACCOUNT_ID` for the initial single-provider deployment.
-Do not put a shell-variable reference into the value: environment expansion is
-not assumed. The second provider will use its own payTo in M4.
+numeric ID as `PROVIDER_A_ACCOUNT_ID` when starting a single provider directly.
+The two-provider launcher maps each provider account independently. Do not put a
+shell-variable reference into the value: environment expansion is not assumed.
 
 Each lender process verifies borrower proof bundles with its own key:
 
@@ -104,13 +104,18 @@ caps come from trusted policy provisioning, not invented setup values.
 
 ## Paid scan provider configuration
 
-The scan provider (`services/resource-server`, A2.1/A2.2) reads these additional
-variables; the template lists them under "Paid scan provider":
+Each scan-provider process receives these generic settings. The launcher maps
+the corresponding `PROVIDER_A_*` and `PROVIDER_B_*` inventory variables onto
+them without sharing databases or callback secrets:
 
 | Variable | Meaning |
 | --- | --- |
 | `PROVIDER_ID` | Provider identity written into every `ScanReport.providerId` |
-| `PROVIDER_A_PRICE_TINYBAR` | Exact HBAR price of one scan, decimal tinybars, nonzero |
+| `PORT` | HTTP listener port |
+| `PAY_TO` | Provider account receiving the exact HBAR payment |
+| `PRICE_TINYBAR` | Exact HBAR price of one scan, decimal tinybars, nonzero |
+| `LATENCY_MS` | Deterministic simulated latency from 0 to 60,000 milliseconds |
+| `SCAN_FAILURE_MODE` | `none`, `timeout`, or `malformed`; controlled failures stop before settlement |
 | `RESOURCE_SERVER_PUBLIC_URL` | Public base URL without trailing slash; `/scan` is appended and must equal the signer's `scanUrl` |
 | `RESOURCE_SERVER_HOST` | Interface the listener binds to; defaults to `127.0.0.1`. Set `0.0.0.0` (or a specific interface) when the public URL is served from another host or a published container port; a non-loopback public URL must then be HTTPS |
 | `RESOURCE_SERVER_DATABASE_URL` | SQLite file for paid-scan claims, reports, settlements and the callback outbox; one per provider |
@@ -118,15 +123,23 @@ variables; the template lists them under "Paid scan provider":
 | `CALLBACK_SECRET` | Unpadded base64url encoding of exactly 32 random bytes; distinct per provider and shared only with the callback verifiers |
 | `CONSUMER_PUBLIC_KEY` | Restricted signer's ECDSA public key, pinned by `CONSUMER_ACCOUNT_ID`, used to verify scan payment authorizations |
 
-The provider also uses `X402_PAY_TO_ACCOUNT_ID`, `X402_NETWORK`, `X402_ASSET`,
-`X402_FACILITATOR_URL`, `HEDERA_MIRROR_NODE_URL` and `RESOURCE_SERVER_PORT`. It
-never receives a private key. Generate a callback secret with
+For direct single-provider compatibility, `RESOURCE_SERVER_PORT`,
+`X402_PAY_TO_ACCOUNT_ID`, and `PROVIDER_A_PRICE_TINYBAR` remain accepted aliases.
+Every provider also uses `X402_NETWORK`, `X402_ASSET`, `X402_FACILITATOR_URL`,
+and `HEDERA_MIRROR_NODE_URL`. It never receives a private key. Generate each
+callback secret with
 `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
 
 Run it from the repository root with root `.env` loaded (Node 20.6+ for `--env-file`):
 
 ```sh
 pnpm --filter @koven/resource-server dev
+```
+
+To start both configured instances from the same binary and root `.env`:
+
+```sh
+pnpm tsx scripts/run-providers.ts
 ```
 
 An unpaid `POST /scan` with a source-bound `ScanRequest` then answers `402` with

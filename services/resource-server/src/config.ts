@@ -3,6 +3,7 @@ import { PublicKey } from "@koven/hedera";
 import { AccountId, HttpUrl, Id, TinybarString } from "@koven/schemas";
 
 import { decodeCallbackSecret } from "./callback.js";
+import { SCAN_FAILURE_MODES, type ScanFailureMode } from "./scan.js";
 
 type EnvironmentSource = Record<string, string | undefined>;
 
@@ -22,6 +23,8 @@ export interface PaidScanEnvironment {
   /** Interface the HTTP listener binds to; loopback by default, `0.0.0.0` for cross-host deployments. */
   readonly host: string;
   readonly port: number;
+  readonly expectedLatencyMs: number;
+  readonly scanFailureMode: ScanFailureMode;
 }
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -86,10 +89,16 @@ function trustedOrigin(value: string): string {
 
 /** Loads only public/provider secrets required by the paid scan process. */
 export function loadPaidScanEnvironment(source: EnvironmentSource = process.env): PaidScanEnvironment {
-  const base = loadResourceServerEnv(source);
+  const effectiveSource = {
+    ...source,
+    RESOURCE_SERVER_PORT: source.PORT ?? source.RESOURCE_SERVER_PORT,
+    X402_PAY_TO_ACCOUNT_ID: source.PAY_TO ?? source.X402_PAY_TO_ACCOUNT_ID,
+  };
+  const base = loadResourceServerEnv(effectiveSource);
   const invalidKeys: string[] = [];
   const providerIdValue = required(source, "PROVIDER_ID", invalidKeys);
-  const amountValue = required(source, "PROVIDER_A_PRICE_TINYBAR", invalidKeys);
+  const priceKey = source.PRICE_TINYBAR === undefined ? "PROVIDER_A_PRICE_TINYBAR" : "PRICE_TINYBAR";
+  const amountValue = required(source, priceKey, invalidKeys);
   const publicUrlValue = required(source, "RESOURCE_SERVER_PUBLIC_URL", invalidKeys);
   const databasePath = required(source, "RESOURCE_SERVER_DATABASE_URL", invalidKeys);
   const callbackUrlValue = required(source, "CALLBACK_URL", invalidKeys);
@@ -98,9 +107,11 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
   const consumerAccountValue = required(source, "CONSUMER_ACCOUNT_ID", invalidKeys);
   const consumerPublicKey = required(source, "CONSUMER_PUBLIC_KEY", invalidKeys);
   const hostValue = source.RESOURCE_SERVER_HOST || DEFAULT_HOST;
+  const latencyValue = source.LATENCY_MS ?? "0";
+  const failureModeValue = source.SCAN_FAILURE_MODE ?? "none";
 
   const providerId = validate("PROVIDER_ID", providerIdValue, value => Id.parse(value), invalidKeys);
-  const amountTinybar = validate("PROVIDER_A_PRICE_TINYBAR", amountValue, value => {
+  const amountTinybar = validate(priceKey, amountValue, value => {
     const parsed = TinybarString.parse(value);
     if (parsed === "0") throw new Error("Price must be positive");
     return parsed;
@@ -113,9 +124,20 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
   validate("CONSUMER_PUBLIC_KEY", consumerPublicKey, value => PublicKey.fromStringECDSA(value), invalidKeys);
   validate("HEDERA_MIRROR_NODE_URL", mirrorNodeUrl, trustedOrigin, invalidKeys);
   const host = validate("RESOURCE_SERVER_HOST", hostValue, bindHost, invalidKeys);
+  const expectedLatencyMs = validate("LATENCY_MS", latencyValue, value => {
+    if (!/^(0|[1-9]\d*)$/.test(value)) throw new Error("Latency must be a non-negative integer");
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed > 60_000) throw new Error("Latency is outside the supported range");
+    return parsed;
+  }, invalidKeys);
+  const scanFailureMode = validate("SCAN_FAILURE_MODE", failureModeValue, value => {
+    if (!SCAN_FAILURE_MODES.includes(value as ScanFailureMode)) throw new Error("Invalid scan failure mode");
+    return value as ScanFailureMode;
+  }, invalidKeys);
 
   if (invalidKeys.length > 0 || !providerId || !amountTinybar || !publicUrl
-    || !facilitatorUrl || !callbackUrl || !consumerAccountId || !host) {
+    || !facilitatorUrl || !callbackUrl || !consumerAccountId || !host
+    || expectedLatencyMs === undefined || scanFailureMode === undefined) {
     throw new EnvironmentValidationError([...new Set(invalidKeys)].sort());
   }
 
@@ -134,5 +156,7 @@ export function loadPaidScanEnvironment(source: EnvironmentSource = process.env)
     databasePath,
     host,
     port: base.port,
+    expectedLatencyMs,
+    scanFailureMode,
   });
 }
