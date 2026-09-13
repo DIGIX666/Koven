@@ -20,7 +20,12 @@ import {
 import { ZodError, type ZodType } from "zod";
 
 import { CompletionError, type CompletionHandler } from "../callbacks/index.js";
-import { RepaymentRequestError, type MissionWorkflow, type RepaymentWorkflow } from "../workflows/index.js";
+import {
+  ProviderDirectoryError,
+  RepaymentRequestError,
+  type MissionWorkflow,
+  type RepaymentWorkflow,
+} from "../workflows/index.js";
 
 export interface OrchestratorAppOptions {
   database: KovenDatabase;
@@ -119,7 +124,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
       detail = error instanceof ZodError
         ? error.issues.map(issue => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; ")
         : "Request body must contain valid JSON";
-    } else if (error instanceof CompletionError || error instanceof RepaymentRequestError) {
+    } else if (
+      error instanceof CompletionError
+      || error instanceof ProviderDirectoryError
+      || error instanceof RepaymentRequestError
+    ) {
       status = error.status;
       code = error.code;
       detail = error.message;

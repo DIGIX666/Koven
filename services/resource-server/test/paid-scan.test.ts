@@ -250,6 +250,29 @@ describe("paid scan server", () => {
     expect(harness.facilitator.settle).not.toHaveBeenCalled();
   });
 
+  it("runs two instances with independent prices and payment recipients", async () => {
+    const [providerA, providerB] = await Promise.all([
+      createHarness({
+        providerId: "provider-a",
+        providerAccountId: "0.0.2001",
+        amountTinybar: "80000000",
+      }),
+      createHarness({
+        providerId: "provider-b",
+        providerAccountId: "0.0.2002",
+        amountTinybar: "45000000",
+      }),
+    ]);
+    const [requirementsA, requirementsB] = await Promise.all([
+      challenge(providerA.baseUrl),
+      challenge(providerB.baseUrl),
+    ]);
+
+    expect(providerA.baseUrl).not.toBe(providerB.baseUrl);
+    expect(requirementsA).toMatchObject({ amount: "80000000", payTo: "0.0.2001" });
+    expect(requirementsB).toMatchObject({ amount: "45000000", payTo: "0.0.2002" });
+  });
+
   it("answers the challenge with an empty body even for browser-like clients", async () => {
     const harness = await createHarness();
     const requirements = await challenge(harness.baseUrl, {
@@ -720,6 +743,24 @@ describe("paid scan server", () => {
     });
     expect(harness.facilitator.settle).not.toHaveBeenCalled();
     expect(harness.store.getPayment(paid.body.paymentAuthorization.transactionId)?.report).toBeNull();
+  });
+
+  it("does not settle payments when a controlled provider failure is enabled", async () => {
+    for (const [scanFailureMode, status] of [["timeout", 504], ["malformed", 500]] as const) {
+      const harness = await createHarness({ scanFailureMode });
+      const paid = await paidRequest(harness);
+      const response = await fetch(`${harness.baseUrl}/scan`, {
+        method: "POST",
+        headers: paid.headers,
+        body: JSON.stringify(paid.body),
+      });
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ code: "internal_error" });
+      expect(harness.facilitator.settle).not.toHaveBeenCalled();
+      expect(harness.engine.scan).not.toHaveBeenCalled();
+      expect(harness.store.getPayment(paid.body.paymentAuthorization.transactionId)?.report).toBeNull();
+    }
   });
 
   it("reconciles an already-attempted payment even after its authorization expires", async () => {

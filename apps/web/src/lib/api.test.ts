@@ -25,9 +25,9 @@ describe("DashboardApi", () => {
     const fetcher = vi.fn(async () => jsonResponse(providerRankingFixture)) as unknown as typeof fetch;
     const api = new DashboardApi({ directoryUrl: "https://directory.example/", fetch: fetcher });
 
-    await api.rankedProviders({ capability: "solidity-security", maxPriceTinybar: "2500000000" });
+    await api.rankedProviders({ capability: "solidity-scan", maxPriceTinybar: "2500000000" });
     expect(fetcher).toHaveBeenCalledWith(
-      "https://directory.example/providers/rank?capability=solidity-security&maxPriceTinybar=2500000000",
+      "https://directory.example/providers/rank?capability=solidity-scan&maxPriceTinybar=2500000000",
       expect.any(Object),
     );
   });
@@ -48,7 +48,7 @@ describe("DashboardApi", () => {
 
   it("rejects non-canonical tinybar query values", () => {
     const api = new DashboardApi();
-    expect(() => api.rankedProviders({ capability: "solidity-security", maxPriceTinybar: "01" }))
+    expect(() => api.rankedProviders({ capability: "solidity-scan", maxPriceTinybar: "01" }))
       .toThrowError(/canonical tinybar/);
   });
 
@@ -74,4 +74,3 @@ describe("DashboardApi", () => {
       .rejects.toMatchObject({ kind: "network" });
   });
 });
-

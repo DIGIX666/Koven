@@ -12,7 +12,7 @@ export type ScanRequestErrorCode =
 export class ScanServiceError extends Error {
   constructor(
     readonly code: ScanRequestErrorCode,
-    readonly status: 400 | 413 | 500,
+    readonly status: 400 | 413 | 500 | 504,
     detail: string,
   ) {
     super(detail);

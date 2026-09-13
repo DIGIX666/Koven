@@ -3,10 +3,26 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@koven/audit": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/persistence": "workspace:*",
+    "@koven/policy": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "express": "5.1.0",
+    "zod": "3.25.76",
+    "@koven/x402": "workspace:*",
+    "@koven/zk-policy": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/directory --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/directory --passWithNoTests",
+    "dev": "pnpm --dir ../.. dev:directory"
   }
 }

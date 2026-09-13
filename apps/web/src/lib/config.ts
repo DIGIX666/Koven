@@ -7,7 +7,6 @@ export function configuredMissionIds(value = process.env.NEXT_PUBLIC_DEMO_MISSIO
 }
 
 export const providerQuery = {
-  capability: process.env.NEXT_PUBLIC_PROVIDER_CAPABILITY?.trim() || "solidity-security",
+  capability: process.env.NEXT_PUBLIC_PROVIDER_CAPABILITY?.trim() || "solidity-scan",
   maxPriceTinybar: process.env.NEXT_PUBLIC_MAX_PRICE_TINYBAR?.trim() || "2500000000",
 };
-

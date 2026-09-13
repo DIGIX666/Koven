@@ -216,6 +216,8 @@ describe("consumer credit HTTP adapters", () => {
     });
 
     await expect(lender.quote(request())).resolves.toEqual(valid);
+    expect(lender.isOfferValid(valid, request())).toBe(true);
+    expect(lender.isOfferValid({ ...valid, feeTinybar: 6n }, request())).toBe(false);
     await expect(lender.quote(request())).rejects.toMatchObject({ code: "offer_signature_invalid" });
     await expect(lender.quote(request())).rejects.toMatchObject({ code: "offer_expired" });
   });
@@ -396,6 +398,66 @@ describe("ConsumerPaymentService", () => {
 });
 
 describe("ConsumerMissionExecutor", () => {
+  it("requests every lender and accepts the deterministically selected valid offer", async () => {
+    const expensiveOffer = {
+      ...offerTerms(),
+      id: "offer-expensive",
+      feeTinybar: 10n,
+      termsHash: "b".repeat(64),
+      signature,
+    };
+    const selectedOffer = {
+      ...offerTerms(),
+      id: "offer-selected",
+      lenderAccountId: "0.0.2002",
+      feeTinybar: 2n,
+      termsHash: "c".repeat(64),
+      signature,
+    };
+    const expensiveLender: ConsumerLender = {
+      quote: vi.fn(async () => expensiveOffer),
+      isOfferValid: vi.fn(() => true),
+      accept: vi.fn(),
+    };
+    const selectedLender: ConsumerLender = {
+      quote: vi.fn(async () => selectedOffer),
+      isOfferValid: vi.fn(() => true),
+      accept: vi.fn(async () => ({ fundingTxId })),
+    };
+    const signer: ConsumerCreditSigner = {
+      signCreditRequest: vi.fn(async creditRequest => ({ ...creditRequest, signature })),
+      signCreditAcceptance: vi.fn(async offer => signedAcceptance(offer)),
+    };
+    const payment: ConsumerPayment = {
+      prepare: vi.fn(async () => prepared({ bundle })),
+      pay: vi.fn(async () => paidResult),
+    };
+    const executor = new ConsumerMissionExecutor({
+      borrowerAccountId,
+      balance: { getBalanceTinybar: vi.fn(async () => 0n) },
+      signer,
+      lenders: [expensiveLender, selectedLender],
+      payment,
+      now: () => now,
+      requestId: () => "credit-1",
+    });
+
+    const result = await executor.execute({
+      missionId: "mission-1",
+      targetRef: "ConsumerFlow.sol",
+      source,
+      maxBudgetTinybar: 1_000n,
+      provider,
+    });
+
+    expect(expensiveLender.quote).toHaveBeenCalledTimes(1);
+    expect(selectedLender.quote).toHaveBeenCalledTimes(1);
+    expect(expensiveLender.quote).toHaveBeenCalledWith(expect.objectContaining({ requestedTermSeconds: 600 }));
+    expect(result.credit?.offer).toBe(selectedOffer);
+    expect(expensiveLender.accept).not.toHaveBeenCalled();
+    expect(selectedLender.accept).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for funding registration before starting the paid scan", async () => {
     const order: string[] = [];
     const creditOffer = { ...offerTerms(), termsHash: "c".repeat(64), signature };
@@ -416,6 +478,7 @@ describe("ConsumerMissionExecutor", () => {
         order.push("quote");
         return creditOffer;
       }),
+      isOfferValid: vi.fn(() => true),
       accept: vi.fn(async () => {
         order.push("accept");
         attempts += 1;
@@ -442,7 +505,7 @@ describe("ConsumerMissionExecutor", () => {
       borrowerAccountId,
       balance: { getBalanceTinybar: vi.fn(async () => 1n) },
       signer,
-      lender,
+      lenders: [lender],
       payment,
       now: () => now,
       requestId: () => "credit-1",
@@ -470,6 +533,7 @@ describe("ConsumerMissionExecutor", () => {
       "sign-request",
       "credit-requested",
       "quote",
+      "offers-received",
       "sign-acceptance",
       "accept",
       "accept",
@@ -478,7 +542,7 @@ describe("ConsumerMissionExecutor", () => {
       "payment-preparation",
       "pay",
     ]);
-    expect(progress).toHaveBeenCalledTimes(4);
+    expect(progress).toHaveBeenCalledTimes(5);
     expect(progress).toHaveBeenNthCalledWith(1, {
       type: "proof-generated",
       nonce: "7",
@@ -506,6 +570,7 @@ describe("ConsumerMissionExecutor", () => {
     };
     const lender: ConsumerLender = {
       quote: vi.fn(async () => creditOffer),
+      isOfferValid: vi.fn(() => true),
       accept: vi.fn(async () => ({ fundingTxId })),
     };
     const payment: ConsumerPayment = {
@@ -516,7 +581,7 @@ describe("ConsumerMissionExecutor", () => {
       borrowerAccountId,
       balance: { getBalanceTinybar: vi.fn(async () => 1n) },
       signer,
-      lender,
+      lenders: [lender],
       payment,
       now: () => now,
       requestId: () => "credit-1",
@@ -533,6 +598,7 @@ describe("ConsumerMissionExecutor", () => {
 
     expect(progress.mock.calls.map(([event]) => event.type)).toEqual([
       "credit-requested",
+      "offers-received",
       "funded",
       "payment-preparation",
     ]);
@@ -548,6 +614,7 @@ describe("ConsumerMissionExecutor", () => {
     };
     const lender: ConsumerLender = {
       quote: vi.fn(async () => creditOffer),
+      isOfferValid: vi.fn(() => true),
       accept: vi.fn(async () => {
         throw new ConsumerServiceError(422, "proof_vkey_mismatch", "untrusted verification key");
       }),
@@ -560,8 +627,9 @@ describe("ConsumerMissionExecutor", () => {
       borrowerAccountId,
       balance: { getBalanceTinybar: vi.fn(async () => 1n) },
       signer,
-      lender,
+      lenders: [lender],
       payment,
+      now: () => now,
     });
 
     await expect(executor.execute({
@@ -579,13 +647,13 @@ describe("ConsumerMissionExecutor", () => {
       signCreditRequest: vi.fn(),
       signCreditAcceptance: vi.fn(),
     } as unknown as ConsumerCreditSigner;
-    const lender = { quote: vi.fn(), accept: vi.fn() } as unknown as ConsumerLender;
+    const lender = { quote: vi.fn(), isOfferValid: vi.fn(), accept: vi.fn() } as unknown as ConsumerLender;
     const payment = { prepare: vi.fn(async () => prepared({ bundle })), pay: vi.fn(async () => paidResult) };
     const executor = new ConsumerMissionExecutor({
       borrowerAccountId,
       balance: { getBalanceTinybar: vi.fn(async () => 100n) },
       signer,
-      lender,
+      lenders: [lender],
       payment,
     });
 

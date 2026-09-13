@@ -13,6 +13,7 @@ the command. Shell environment values do not override the provisioning inventory
 | `pnpm tsx scripts/hedera-fund.ts --role provider-a --target-tinybar 100000000` | Transfer only the shortfall needed to reach 1 HBAR. Skip if already funded to that target. |
 | `pnpm tsx scripts/hedera-create-topic.ts` | Create and save an operator-administered audit topic, or validate the existing configured topic. |
 | `pnpm tsx scripts/x402-smoke.ts` | Verify and settle one exact HBAR payment, or reconcile the saved payment on rerun. |
+| `pnpm tsx scripts/run-providers.ts` | Start two isolated scan-provider instances with their configured identities, prices, latencies and payment recipients. |
 
 The Hedera provisioning transactions incur testnet network fees paid by the
 operator. For the x402 payment, Blocky402's advertised fee payer pays the

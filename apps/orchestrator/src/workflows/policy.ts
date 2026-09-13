@@ -39,7 +39,7 @@ export interface HttpMissionPolicyRegistrarOptions {
   readonly timeoutMs?: number;
 }
 
-/** Provisions the immutable mission policy through an authenticated service boundary. */
+/** Proposes a policy to the independent registrar using the orchestrator credential. */
 export class HttpMissionPolicyRegistrar implements MissionPolicyRegistrar {
   private readonly baseUrl: URL;
   private readonly fetchImplementation: typeof fetch;
@@ -59,7 +59,7 @@ export class HttpMissionPolicyRegistrar implements MissionPolicyRegistrar {
     const policy = MissionPolicyRequestSchema.parse(input);
     let response: Response;
     try {
-      response = await this.fetchImplementation(new URL("/internal/missions/register", this.baseUrl), {
+      response = await this.fetchImplementation(new URL("/missions/provision", this.baseUrl), {
         method: "POST",
         headers: {
           authorization: `Bearer ${this.options.credential}`,

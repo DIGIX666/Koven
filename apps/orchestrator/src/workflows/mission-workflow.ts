@@ -7,7 +7,7 @@ import {
   type ConsumerMissionResult,
 } from "@koven/consumer-agent";
 import { loanIdForOffer } from "@koven/credit-protocol";
-import { ALLOWED_TRANSITIONS, type Loan, type MissionState, type Provider, type RankedProvider } from "@koven/domain";
+import { ALLOWED_TRANSITIONS, ErrorCode, type Loan, type MissionState, type Provider, type RankedProvider } from "@koven/domain";
 import {
   createLoan,
   createMission,
@@ -18,10 +18,11 @@ import {
 } from "@koven/persistence";
 import type { HttpRequest } from "@koven/schemas";
 import { type FieldHasher, loadPoseidon } from "@koven/x402";
-import { buildMerkleTree } from "@koven/zk-policy";
+import { buildMissionRecipientRoot } from "@koven/zk-policy";
 
 import { hashBytes } from "../canonical.js";
 import type { MissionStateMachine } from "../state/index.js";
+import type { ProviderDirectory } from "./discover.js";
 
 class PolicyRejectedError extends Error {}
 
@@ -34,13 +35,16 @@ export interface MissionWorkflowOptions {
   readonly stateMachine: MissionStateMachine;
   readonly consumer: Pick<ConsumerMissionExecutor, "execute">;
   readonly policyRegistrars: readonly MissionPolicyRegistrar[];
-  readonly providers: readonly Provider[];
+  readonly providerDirectory: ProviderDirectory;
   readonly borrowerAccountId: string;
   /** Poseidon used for the singleton recipient root; loaded on first use when omitted. */
   readonly poseidon?: FieldHasher;
   readonly now?: () => string;
   readonly missionId?: () => string;
   readonly sessionId?: (missionId: string) => string;
+  readonly policyRegistrationMaxAttempts?: number;
+  readonly policyRegistrationRetryDelayMs?: number;
+  readonly wait?: (milliseconds: number) => Promise<void>;
 }
 
 /**
@@ -52,25 +56,38 @@ export class MissionWorkflow {
   private readonly now: () => string;
   private readonly missionId: () => string;
   private readonly sessionId: (missionId: string) => string;
+  private readonly policyRegistrationMaxAttempts: number;
+  private readonly policyRegistrationRetryDelayMs: number;
+  private readonly wait: (milliseconds: number) => Promise<void>;
   private poseidon: FieldHasher | undefined;
 
   constructor(private readonly options: MissionWorkflowOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.missionId = options.missionId ?? (() => `mission-${randomUUID()}`);
     this.sessionId = options.sessionId ?? (missionId => `session-${missionId}`);
+    this.policyRegistrationMaxAttempts = options.policyRegistrationMaxAttempts ?? 3;
+    this.policyRegistrationRetryDelayMs = options.policyRegistrationRetryDelayMs ?? 250;
+    this.wait = options.wait ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
     this.poseidon = options.poseidon;
     if (options.policyRegistrars.length === 0) {
       throw new Error("At least one trusted mission-policy registrar is required");
     }
-    if (options.providers.length === 0) {
-      throw new Error("At least one provider is required");
+    if (!Number.isInteger(this.policyRegistrationMaxAttempts)
+      || this.policyRegistrationMaxAttempts < 1
+      || this.policyRegistrationMaxAttempts > 10) {
+      throw new RangeError("Policy registration attempts must be between 1 and 10");
+    }
+    if (!Number.isInteger(this.policyRegistrationRetryDelayMs)
+      || this.policyRegistrationRetryDelayMs < 1
+      || this.policyRegistrationRetryDelayMs > 60_000) {
+      throw new RangeError("Policy registration retry delay must be between 1 and 60000 ms");
     }
   }
 
   /** Singleton recipient root of the selected provider, as the signer and lender recompute it. */
   async recipientRoot(providerAccountId: string): Promise<string> {
     this.poseidon ??= await loadPoseidon();
-    return buildMerkleTree([providerAccountId], this.poseidon).root;
+    return buildMissionRecipientRoot(providerAccountId, this.poseidon);
   }
 
   async run(request: HttpRequest<"createMission">): Promise<PersistedMission> {
@@ -78,9 +95,13 @@ export class MissionWorkflow {
     const targetSha256 = hashBytes(request.source);
     const createdAt = this.now();
     const spendingCapTinybar = BigInt(request.maxBudgetTinybar);
-    const ranked = rankProviders(this.options.providers, spendingCapTinybar);
+    const discovery = await this.options.providerDirectory.rank({
+      capability: "solidity-scan",
+      maxPriceTinybar: spendingCapTinybar.toString(10),
+    }, id);
+    const ranked = discovery.ranked;
     const selected = ranked[0];
-    if (selected === undefined) throw new Error("No provider is configured");
+    if (selected === undefined) throw new Error("No provider matched the mission requirements");
     const provider = selected.provider;
     // The selected provider is the mission's whole approved recipient set, even
     // when its price is then rejected against the budget.
@@ -118,7 +139,7 @@ export class MissionWorkflow {
         targetSha256,
       });
       if (provider.priceTinybar > spendingCapTinybar) {
-        await move("payment-preparation", "providers-ranked", { ranked });
+        await move("payment-preparation", "providers-ranked", { ranked, formula: discovery.formula });
         throw new PolicyRejectedError("Selected provider exceeds the mission budget");
       }
 
@@ -144,7 +165,7 @@ export class MissionWorkflow {
         provider: { ...provider, priceTinybar: provider.priceTinybar.toString(10) },
         approvedRecipientsRoot,
       } satisfies HttpRequest<"registerMissionPolicy">;
-      await Promise.all(this.options.policyRegistrars.map(registrar => registrar.register(policy)));
+      await this.registerPolicy(policy);
 
       const result = await this.options.consumer.execute(
         {
@@ -157,6 +178,12 @@ export class MissionWorkflow {
         {
           onProgress: async event => {
             switch (event.type) {
+              case "offers-received":
+                await this.options.stateMachine.record(id, {
+                  type: "offers-received",
+                  payload: { ranked: event.ranked, selectedOfferId: event.selectedOfferId },
+                });
+                return;
               case "proof-generated":
                 // Proven before credit: an audit fact, not a stored state.
                 await this.options.stateMachine.record(id, {
@@ -169,6 +196,9 @@ export class MissionWorkflow {
                 });
                 return;
               case "credit-requested":
+                await this.options.stateMachine.record(id, {
+                  type: "providers-ranked", payload: { ranked, formula: discovery.formula },
+                });
                 await move("credit-requested", "credit-requested", {
                   requestId: event.request.id,
                   principalTinybar: event.request.principalTinybar,
@@ -195,7 +225,7 @@ export class MissionWorkflow {
                   return;
                 }
                 if (state === "discovering-services") {
-                  await move("payment-preparation", "providers-ranked", { ranked });
+                  await move("payment-preparation", "providers-ranked", { ranked, formula: discovery.formula });
                   return;
                 }
                 throw new PolicyRejectedError(`Payment preparation is invalid from ${state}`);
@@ -226,12 +256,32 @@ export class MissionWorkflow {
         reportSha256: result.scan.report.reportSha256,
       });
     } catch (error) {
-      await this.finishFailure(state, loan, ranked, move, error);
+      await this.finishFailure(state, loan, ranked, discovery.formula, move, error);
     }
 
     const completed = getMission(this.options.database, id);
     if (completed === undefined) throw new Error(`Mission disappeared during workflow: ${id}`);
     return completed;
+  }
+
+  private async registerPolicy(policy: HttpRequest<"registerMissionPolicy">): Promise<void> {
+    const results = await Promise.allSettled(this.options.policyRegistrars.map(async registrar => {
+      for (let attempt = 1; attempt <= this.policyRegistrationMaxAttempts; attempt += 1) {
+        try {
+          await registrar.register(policy);
+          return;
+        } catch (error) {
+          const status = typeof error === "object" && error !== null && "status" in error
+            ? error.status
+            : undefined;
+          const retryable = typeof status === "number" && status >= 500 && status <= 599;
+          if (!retryable || attempt === this.policyRegistrationMaxAttempts) throw error;
+          await this.wait(this.policyRegistrationRetryDelayMs);
+        }
+      }
+    }));
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure !== undefined) throw failure.reason;
   }
 
   private loanFromFunding(
@@ -325,6 +375,7 @@ export class MissionWorkflow {
     initialState: MissionState,
     loan: Loan | undefined,
     ranked: readonly RankedProvider[],
+    rankingFormula: string,
     move: (
       to: MissionState,
       type: Parameters<MissionStateMachine["transition"]>[3]["type"],
@@ -337,14 +388,28 @@ export class MissionWorkflow {
     let state = initialState;
     const reason = error instanceof Error ? error.message : "Unknown workflow failure";
     const policyRejection = error instanceof PolicyRejectedError || error instanceof ConsumerPolicyRejectedError;
-    const payload = error instanceof ConsumerPolicyRejectedError ? { reason, code: error.code } : { reason };
+    const candidateCode = typeof error === "object" && error !== null && "code" in error
+      ? error.code
+      : undefined;
+    const domainCode = typeof candidateCode === "string"
+      && (Object.values(ErrorCode) as string[]).includes(candidateCode)
+      ? candidateCode
+      : undefined;
+    const basePayload = domainCode === undefined ? { reason } : { reason, code: domainCode };
+    // Only a failure after payment authorization is attributable to the
+    // selected provider. Credit, policy and orchestration failures must not
+    // distort provider reputation.
+    const selectedProviderId = initialState === "payment-authorized" ? ranked[0]?.provider.id : undefined;
+    let failureAttributed = false;
     const moveFailure = async (to: MissionState, type: "payment-rejected" | "mission-failed") => {
-      await move(to, type, payload);
+      const attributesProvider = type === "mission-failed" && !failureAttributed && selectedProviderId !== undefined;
+      if (attributesProvider) failureAttributed = true;
+      await move(to, type, attributesProvider ? { ...basePayload, providerId: selectedProviderId } : basePayload);
       state = to;
     };
 
     if (error instanceof ConsumerPolicyRejectedError && state === "discovering-services") {
-      await move("payment-preparation", "providers-ranked", { ranked });
+      await move("payment-preparation", "providers-ranked", { ranked, formula: rankingFormula });
       state = "payment-preparation";
     }
     if (policyRejection && state === "payment-preparation") {
@@ -358,21 +423,4 @@ export class MissionWorkflow {
     if (state !== "recovery") return;
     await moveFailure(loan === undefined ? "closed" : "defaulted", "mission-failed");
   }
-}
-
-export function rankProviders(
-  providers: readonly Provider[],
-  maxBudgetTinybar: bigint,
-): RankedProvider[] {
-  const denominator = Number(maxBudgetTinybar === 0n ? 1n : maxBudgetTinybar);
-  return providers.map(provider => {
-    const price = 1 - Math.min(Number(provider.priceTinybar) / denominator, 1);
-    const reputation = provider.reputationScore;
-    const latency = 1 / (1 + provider.expectedLatencyMs / 1_000);
-    return {
-      provider,
-      score: price * 0.4 + reputation * 0.4 + latency * 0.2,
-      breakdown: { price, reputation, latency },
-    };
-  }).sort((left, right) => right.score - left.score || left.provider.id.localeCompare(right.provider.id));
 }

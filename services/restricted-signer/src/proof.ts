@@ -1,6 +1,6 @@
 import { ErrorCode, type NormalizedChallenge, type ProofBundle } from "@koven/domain";
 import { challengeToFieldInputs, type FieldHasher, paymentCommitment } from "@koven/x402";
-import { buildMerkleTree, type Groth16Verifier, verifyProofBundle } from "@koven/zk-policy";
+import { buildMissionRecipientRoot, type Groth16Verifier, verifyProofBundle } from "@koven/zk-policy";
 
 import { fail } from "./errors.js";
 import type { MissionPolicy } from "./store.js";
@@ -34,7 +34,7 @@ export class ProofPolicy {
 
   /** The singleton recipient root a mission policy must carry for its selected provider. */
   rootFor(providerAccountId: string): string {
-    return buildMerkleTree([providerAccountId], this.options.poseidon).root;
+    return buildMissionRecipientRoot(providerAccountId, this.options.poseidon);
   }
 
   commitmentFor(challenge: NormalizedChallenge): string {

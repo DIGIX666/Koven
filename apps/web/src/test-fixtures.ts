@@ -27,7 +27,7 @@ export const providerRankingFixture: HttpResponse<"rankProviders"> = {
       id: "provider-a",
       accountId: "0.0.123",
       endpoint: "http://127.0.0.1:3003",
-      capability: "solidity-security",
+      capability: "solidity-scan",
       priceTinybar: "1000000",
       reputationScore: 0.8,
       expectedLatencyMs: 4_000,
@@ -36,4 +36,3 @@ export const providerRankingFixture: HttpResponse<"rankProviders"> = {
     breakdown: { price: 0.9, reputation: 0.8, latency: 0.7 },
   }],
 };
-

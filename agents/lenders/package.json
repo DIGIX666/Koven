@@ -17,6 +17,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@koven/policy": "workspace:*",
     "@types/express": "5.0.3"
   },
   "scripts": {
@@ -24,6 +25,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. --project @koven/lender-agents --passWithNoTests",
-    "test:artifacts": "vitest run --config vitest.artifacts.config.ts"
+    "test:artifacts": "vitest run --config vitest.artifacts.config.ts",
+    "dev": "pnpm --dir ../.. dev:lenders"
   }
 }

@@ -14,7 +14,13 @@ import {
   openDatabase,
   type KovenDatabase,
 } from "@koven/persistence";
-import { CallbackResponseSchema, MAX_HTTP_BODY_BYTES, MissionDetailResponseSchema, MissionSchema } from "@koven/schemas";
+import {
+  CallbackResponseSchema,
+  type HttpRequest,
+  MAX_HTTP_BODY_BYTES,
+  MissionDetailResponseSchema,
+  MissionSchema,
+} from "@koven/schemas";
 import { NoopAuditSink } from "@koven/testing";
 import { loadPoseidon } from "@koven/x402";
 import { buildMerkleTree } from "@koven/zk-policy";
@@ -67,6 +73,8 @@ interface RuntimeOptions {
   readonly settlementMismatch?: boolean;
   readonly paymentFailureAfterFunding?: boolean;
   readonly continueAfterFunding?: Promise<void>;
+  readonly policyRegistrationFailures?: number;
+  readonly policyRegistrationConflict?: boolean;
   /** The keyless consumer refuses on a frozen policy code at the given step. */
   readonly policyRejection?: { readonly code: string; readonly at: "proof" | "acceptance" | "authorize" };
 }
@@ -127,6 +135,7 @@ const runtime = (options: RuntimeOptions = {}) => {
           nonce: "1",
           amountTinybar: providerPriceTinybar,
         });
+        if (options.paymentFailureAfterFunding) throw new Error("Provider payment failed");
         await observer?.onProgress({ type: "service-paid", scan });
         return scan;
       };
@@ -177,7 +186,6 @@ const runtime = (options: RuntimeOptions = {}) => {
       };
       await observer?.onProgress({ type: "funded", request, offer, acceptance, fundingTxId });
       await options.continueAfterFunding;
-      if (options.paymentFailureAfterFunding) throw new Error("Provider payment failed");
       return {
         scan: await pay(),
         credit: {
@@ -189,19 +197,46 @@ const runtime = (options: RuntimeOptions = {}) => {
       };
     }),
   };
-  const policyRegistrars = [
-    { register: vi.fn(async () => undefined) },
-    { register: vi.fn(async () => undefined) },
-  ];
+  const policyRegistrars = [0, 1].map(index => {
+    let remainingFailures = options.policyRegistrationFailures ?? 0;
+    return {
+      register: vi.fn(async (_policy: HttpRequest<"registerMissionPolicy">) => {
+        if (options.policyRegistrationConflict && index === 0) {
+          throw Object.assign(new Error("Mission policy conflicts with the stored policy"), {
+            status: 409,
+            code: ErrorCode.MISSION_POLICY_CONFLICT,
+          });
+        }
+        if (remainingFailures > 0) {
+          remainingFailures -= 1;
+          throw Object.assign(new Error("Policy registrar unavailable"), {
+            status: 503,
+            code: ErrorCode.INTERNAL_ERROR,
+          });
+        }
+      }),
+    };
+  });
+  const providerDirectory = {
+    rank: vi.fn(async () => ({
+      ranked: [{
+        provider,
+        score: 1,
+        breakdown: { price: 1, reputation: 1, latency: 1 },
+      }],
+      formula: "test provider",
+    })),
+  };
   const workflow = new MissionWorkflow({
     database,
     stateMachine,
     consumer,
     policyRegistrars,
-    providers: [provider],
+    providerDirectory,
     borrowerAccountId: "0.0.10",
     now: () => timestamp,
     missionId: () => "mission-1",
+    wait: vi.fn(async () => undefined),
   });
 
   let remainingSettlementFailures = options.settlementFailures ?? 0;
@@ -248,6 +283,7 @@ const runtime = (options: RuntimeOptions = {}) => {
     sink,
     consumer,
     policyRegistrars,
+    providerDirectory,
     report,
     provider,
     settlementConfirmer,
@@ -382,6 +418,25 @@ describe("orchestrator mission and trusted completion API", () => {
       loanId,
       idempotencyKey: `repayment:${loanId}`,
     });
+  });
+
+  it("provisions identical policy with the same retry policy to every registrar", async () => {
+    const test = runtime({ policyRegistrationFailures: 2 });
+    const baseUrl = await listen(test.app);
+
+    expect(MissionSchema.parse(await (await postMission(baseUrl)).json()).state).toBe("running");
+    expect(test.policyRegistrars.map(registrar => registrar.register.mock.calls.length)).toEqual([3, 3]);
+    const registeredPolicies = test.policyRegistrars.flatMap(registrar => registrar.register.mock.calls.map(([policy]) => policy));
+    expect(registeredPolicies.every(policy => JSON.stringify(policy) === JSON.stringify(registeredPolicies[0]))).toBe(true);
+  });
+
+  it("does not retry a conflicting policy or start the consumer", async () => {
+    const test = runtime({ policyRegistrationConflict: true });
+    const baseUrl = await listen(test.app);
+
+    expect(MissionSchema.parse(await (await postMission(baseUrl)).json()).state).toBe("closed");
+    expect(test.policyRegistrars[0]!.register).toHaveBeenCalledTimes(1);
+    expect(test.consumer.execute).not.toHaveBeenCalled();
   });
 
   it("closes a sufficiently funded mission without creating or repaying a loan", async () => {
@@ -552,14 +607,6 @@ describe("orchestrator mission and trusted completion API", () => {
   it("preserves request errors and closes policy rejections without payment", async () => {
     const test = runtime({ budgetTinybar: 50n, providerPriceTinybar: 100n });
     const baseUrl = await listen(test.app);
-    expect(() => new MissionWorkflow({
-      database: test.database,
-      stateMachine: new MissionStateMachine(test.database, test.sink),
-      consumer: test.consumer,
-      policyRegistrars: test.policyRegistrars,
-      providers: [],
-      borrowerAccountId: "0.0.10",
-    })).toThrow(/At least one provider/);
     const tooLarge = await fetch(`${baseUrl}/missions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -646,6 +693,10 @@ describe("orchestrator mission and trusted completion API", () => {
       "offer-accepted",
       "mission-failed",
     ]));
+    const attributedFailures = listMissionEvents<{ detail: { providerId?: string } }>(test.database, "mission-1")
+      .filter(event => event.type === "mission-failed" && event.payload.detail.providerId !== undefined);
+    expect(attributedFailures).toHaveLength(1);
+    expect(attributedFailures[0]!.payload.detail.providerId).toBe(test.provider.id);
     expect(test.repaymentClient.repay).not.toHaveBeenCalled();
   });
 });
