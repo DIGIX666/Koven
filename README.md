@@ -85,6 +85,7 @@ credentials for local development.
 | `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered. Runs right after install, no artifacts needed |
 | `pnpm test:e2e` | Run the complete real-service vertical flow with deterministic offline network boundaries |
 | `pnpm test:e2e:testnet` | Run the same vertical flow on Hedera testnet and print funding, payment and repayment HashScan links |
+| `pnpm dev:orchestrator` | Start the mission orchestrator (`POST /missions`, `GET /missions/:id`, the trusted completion callback) over `ORCHESTRATOR_DATABASE_URL`, composed against the signer, registrar and lenders of `.env` |
 | `pnpm audit:flush` | Drain the current `DATABASE_URL` HCS outbox and fail if events remain after the configured timeout |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
 | `pnpm zk:test` | Run every workspace's artifact-bound suites (Policy V1 benchmark, proving and verification, the signer's real-proof gate, the lender's independent verification, the offline vertical flow with real proofs and zk-mode signer and lender) on the verified official artifacts; requires `pnpm zk:build` first |

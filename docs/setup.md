@@ -182,6 +182,34 @@ pnpm --filter @koven/restricted-signer dev
 `GET /health` answers `{ "status": "ok", "circuitId": "koven-policy-v1", "vkeyHash": null }`
 in deterministic mode; in zk mode `vkeyHash` is the pinned SHA-256 of the signer's key.
 
+## Orchestrator configuration
+
+The mission orchestrator (`apps/orchestrator`, `pnpm dev:orchestrator`) holds no
+Hedera key of its own. It reaches the signer, the registrar and the lenders over
+pinned loopback or HTTPS origins with opaque credentials, reads the borrower's
+balance and confirms settlements through the Mirror Node, and serves
+`POST /missions`, `GET /missions/:id` and the trusted completion callback that
+the dashboard and the providers use.
+
+| Variable | Meaning |
+| --- | --- |
+| `ORCHESTRATOR_HOST`, `ORCHESTRATOR_PORT` | Listener; the host defaults to `127.0.0.1` |
+| `ORCHESTRATOR_DATABASE_URL` | The orchestrator's own SQLite database (missions, loans, events, HCS outbox); never the signer's `DATABASE_URL` |
+| `CONSUMER_ACCOUNT_ID` | The keyless borrower the missions run for |
+| `HEDERA_MIRROR_NODE_URL` | Balance reads and independent settlement confirmation |
+| `SIGNER_URL`, `SIGNER_CONSUMER_CREDENTIAL`, `SIGNER_ORCHESTRATOR_CREDENTIAL` | Restricted signer origin; the consumer credential signs credit and payments, the orchestrator credential drives `/repay` and authenticates to the registrar |
+| `REGISTRAR_URL` | Registrar origin used for provider ranking and mission-policy provisioning |
+| `LENDER_A_URL`, `LENDER_A_ACCOUNT_ID`, `LENDER_B_URL`, `LENDER_B_ACCOUNT_ID` | Candidate lenders (B optional); their offers are verified against `SIGNER_LENDER_PUBLIC_KEYS` |
+| `SIGNER_PROVIDER_CALLBACK_SECRETS` | Same `providerId:secret` pairs as the signer; the orchestrator verifies provider callbacks before forwarding them |
+| `SIGNER_PROOF_MODE` | `zk` makes the consumer prove every payment with the official artifacts |
+| `AUDIT_SINK`, `HCS_AUDIT_TOPIC_ID`, `HEDERA_OPERATOR_ID`, `HEDERA_OPERATOR_PRIVATE_KEY` | `hcs` drains the durable outbox with the operator account; `noop` stays network-free |
+| `ORCHESTRATOR_ALWAYS_BORROW` | Demo setting: `true` borrows the full price regardless of the borrower's balance |
+| `DIRECTORY_EVENTS_DATABASE_URL` | Read by `pnpm dev:directory` / `dev:registrar`: the orchestrator database whose events derive provider reputation |
+
+Pointing `ORCHESTRATOR_DATABASE_URL` at the `orchestrator.db` of a finished
+`pnpm test:e2e:testnet` run serves that run's missions to the dashboard without
+executing any new transaction.
+
 ## Checklist for a new local setup
 
 - [ ] Six distinct numeric testnet IDs are mapped to the roles above.

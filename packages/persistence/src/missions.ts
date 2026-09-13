@@ -6,6 +6,7 @@ import {
   isUniqueConstraint,
   PersistenceConflict,
   PersistenceConflictError,
+  PersistenceNotFoundError,
   tinybarFromText,
   tinybarToText,
 } from "./db.js";
@@ -136,6 +137,20 @@ export function getMission(database: KovenDatabase, id: string): PersistedMissio
   };
   if (row.session_id !== null) mission.sessionId = row.session_id;
   return mission;
+}
+
+/** Adds a settled payment to the mission's spent total; the caller runs it inside the settling transition. */
+export function recordMissionSpending(database: KovenDatabase, id: string, amountTinybar: bigint): void {
+  if (amountTinybar <= 0n) throw new RangeError("Spent amount must be positive");
+  const row = database.prepare(`SELECT spent_tinybar FROM missions WHERE id = ?`).get(id) as { spent_tinybar: string } | undefined;
+  if (row === undefined) throw new PersistenceNotFoundError("mission", id);
+  const previous = tinybarFromText(row.spent_tinybar);
+  const result = database.prepare(`
+    UPDATE missions SET spent_tinybar = ? WHERE id = ? AND spent_tinybar = ?
+  `).run(tinybarToText(previous + amountTinybar), id, row.spent_tinybar);
+  if (result.changes !== 1) {
+    throw new PersistenceConflictError(PersistenceConflict.CONCURRENT_UPDATE, `Mission ${id} spending changed concurrently`);
+  }
 }
 
 /** Advances a mission only when its persisted state still matches the caller's expectation. */

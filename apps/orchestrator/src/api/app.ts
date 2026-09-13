@@ -85,9 +85,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
     const { id } = MissionParamsSchema.parse(request.params);
     const mission = getMission(options.database, id);
     if (mission === undefined) throw new PersistenceNotFoundError("mission", id);
+    // Only the frozen public `AuditEvent` fields leave the process; the local
+    // payload and the HCS publication columns stay behind until a read contract exposes them.
     const events = listMissionEvents(options.database, id).map(({
       payload: _payload,
       publishedAt: _publishedAt,
+      hcsTransactionId: _hcsTransactionId,
+      hcsSequenceNumber: _hcsSequenceNumber,
       ...event
     }) => event);
     response.json(responseContract(MissionDetailResponseSchema, {

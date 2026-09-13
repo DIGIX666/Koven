@@ -379,6 +379,7 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(getLoan(test.database, loanId)?.state).toBe("funded");
     const singletonRoot = buildMerkleTree([test.provider.accountId], await loadPoseidon()).root;
     expect(created.approvedRecipientsRoot).toBe(singletonRoot);
+    expect(created.spentTinybar).toBe(test.provider.priceTinybar.toString(10));
     expect(getMissionPolicy(test.database, "mission-1")?.approvedRecipientsRoot).toBe(singletonRoot);
     expect(test.policyRegistrars[0]!.register).toHaveBeenCalledWith(expect.objectContaining({
       approvedRecipientsRoot: singletonRoot,

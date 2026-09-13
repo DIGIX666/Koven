@@ -17,7 +17,8 @@ const registry = new ProviderRegistry(process.env.DIRECTORY_PROVIDERS_FILE
   : ["A", "B"].map(name => ({ id: required(`PROVIDER_${name}_ID`), accountId: required(`PROVIDER_${name}_ACCOUNT_ID`),
     endpoint: required(`PROVIDER_${name}_PUBLIC_URL`), capability: "solidity-scan", priceTinybar: required(`PROVIDER_${name}_PRICE_TINYBAR`),
     expectedLatencyMs: Number(required(`PROVIDER_${name}_LATENCY_MS`)) })));
-const events = openDatabase(required("DATABASE_URL"));
+// Reputation is derived from the orchestrator's mission events; `DATABASE_URL` alone belongs to the signer.
+const events = openDatabase(process.env.DIRECTORY_EVENTS_DATABASE_URL || required("DATABASE_URL"));
 const approvals = registrar ? openDatabase(required("REGISTRAR_DATABASE_URL")) : undefined;
 try {
   const app = approvals === undefined ? createDirectoryApp({ database: events, registry }) : await createRegistrarApp({

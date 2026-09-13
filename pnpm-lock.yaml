@@ -139,6 +139,9 @@ importers:
       '@koven/audit':
         specifier: workspace:*
         version: link:../../packages/audit
+      '@koven/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@koven/consumer-agent':
         specifier: workspace:*
         version: link:../../agents/consumer
@@ -148,12 +151,18 @@ importers:
       '@koven/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../../packages/hedera
       '@koven/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
       '@koven/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      '@koven/restricted-signer':
+        specifier: workspace:*
+        version: link:../../services/restricted-signer
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas

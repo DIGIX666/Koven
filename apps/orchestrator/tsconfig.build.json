@@ -43,6 +43,15 @@
     },
     {
       "path": "../../packages/zk-policy/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/config/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/hedera/tsconfig.build.json"
+    },
+    {
+      "path": "../../services/restricted-signer/tsconfig.build.json"
     }
   ]
 }

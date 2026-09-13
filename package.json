@@ -18,6 +18,7 @@
     "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
     "test:scripts": "tsx --test scripts/test/*.test.ts",
     "dev:lenders": "tsx scripts/run-lenders.ts",
+    "dev:orchestrator": "pnpm --filter @koven/orchestrator dev",
     "dev:directory": "tsx scripts/run-directory.ts",
     "dev:registrar": "tsx scripts/run-directory.ts --registrar",
     "dev:providers": "tsx scripts/run-providers.ts",
