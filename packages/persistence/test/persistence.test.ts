@@ -15,13 +15,18 @@ import {
   createSpendingSession,
   getIdempotencyResult,
   getLoan,
+  getLoanByMission,
   getMission,
+  getMissionCompletion,
+  getMissionPolicy,
   getSpendingReservation,
   getSpendingSession,
   listMissionEvents,
   MAX_TINYBAR,
   openDatabase,
   reserveSpending,
+  saveMissionCompletion,
+  saveMissionPolicy,
   updateLoanState,
   type KovenDatabase,
 } from "../src/index.js";
@@ -101,6 +106,37 @@ describe("SQLite persistence", () => {
       state: "funded",
       fundingTxId: "0.0.10@1788696000.000000001",
     });
+    saveMissionPolicy(database, {
+      missionId: "mission-1",
+      borrowerAccountId: "0.0.10",
+      spendingCapTinybar: 100n,
+      sessionId: "session-1",
+      sessionCapTinybar: 100n,
+      targetSha256: hash,
+      provider: {
+        id: "provider-1",
+        accountId: "0.0.20",
+        endpoint: "https://provider.example",
+        capability: "solidity-scan",
+        priceTinybar: 25n,
+        reputationScore: 0.9,
+        expectedLatencyMs: 50,
+      },
+      approvedRecipientsRoot: "1",
+      createdAt: timestamp,
+    });
+    saveMissionCompletion(database, {
+      missionId: "mission-1",
+      reportSha256: hash,
+      settlementTxId: "0.0.10@1788696000.000000002",
+      settlementPayerAccountId: "0.0.10",
+      settlementRecipientAccountId: "0.0.20",
+      settlementAsset: "0.0.0",
+      settlementAmountTinybar: 25n,
+      settlementConfirmedAt: timestamp,
+      callbackBodySha256: "b".repeat(64),
+      acceptedAt: timestamp,
+    });
     createIdempotencyResult(database, {
       key: "mission-complete:mission-1:hash",
       requestHash: hash,
@@ -129,12 +165,27 @@ describe("SQLite persistence", () => {
     databases.push(database);
     expect(getMission(database, "mission-1")?.spentTinybar).toBe(25n);
     expect(getLoan(database, "loan-1")).toMatchObject({ principalTinybar: 90n, feeTinybar: 10n });
+    expect(getLoanByMission(database, "mission-1")?.id).toBe("loan-1");
+    expect(getMissionPolicy(database, "mission-1")).toMatchObject({
+      borrowerAccountId: "0.0.10",
+      spendingCapTinybar: 100n,
+      provider: { id: "provider-1", priceTinybar: 25n },
+    });
+    expect(getMissionCompletion(database, "mission-1")).toMatchObject({
+      reportSha256: hash,
+      settlementTxId: "0.0.10@1788696000.000000002",
+      settlementPayerAccountId: "0.0.10",
+      settlementRecipientAccountId: "0.0.20",
+      settlementAsset: "0.0.0",
+      settlementAmountTinybar: 25n,
+      settlementConfirmedAt: timestamp,
+    });
     expect(getIdempotencyResult(database, "mission-complete:mission-1:hash")?.response)
       .toEqual({ status: "accepted" });
     expect(listMissionEvents(database, "mission-1")).toHaveLength(1);
     expect(getSpendingReservation(database, "mission-1", "1")?.amountTinybar).toBe(25n);
     expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get())
-      .toEqual({ count: 1 });
+      .toEqual({ count: 2 });
   });
 
   it("returns the stored idempotency result for a replay and rejects conflicting content", () => {

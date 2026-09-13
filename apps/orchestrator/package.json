@@ -3,8 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": "./src/index.ts",
   "dependencies": {
     "@koven/audit": "workspace:*",
+    "@koven/consumer-agent": "workspace:*",
+    "@koven/credit-protocol": "workspace:*",
     "@koven/domain": "workspace:*",
     "@koven/persistence": "workspace:*",
     "@koven/schemas": "workspace:*",
@@ -21,6 +24,6 @@
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/orchestrator --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/orchestrator"
   }
 }

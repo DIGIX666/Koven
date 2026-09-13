@@ -83,4 +83,22 @@ export class MissionStateMachine {
     await this.auditSink.write(event).catch(() => undefined);
     return mission;
   }
+
+  /** Persists an audit fact which does not change mission state. */
+  async record<T>(missionId: string, audit: TransitionAudit<T>): Promise<void> {
+    const mission = getMission(this.database, missionId);
+    if (mission === undefined) throw new PersistenceNotFoundError("mission", missionId);
+    const occurredAt = this.now();
+    const payload = canonicalJsonValue(audit.payload);
+    const event: AuditEvent = {
+      id: this.eventId(missionId, mission.state, mission.state),
+      missionId,
+      type: audit.type,
+      payloadHash: hashCanonicalJson(payload),
+      occurredAt,
+    };
+    if (audit.transactionId !== undefined) event.transactionId = audit.transactionId;
+    createEvent(this.database, { ...event, payload });
+    await this.auditSink.write(event).catch(() => undefined);
+  }
 }

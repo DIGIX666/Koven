@@ -117,6 +117,64 @@ export const MIGRATIONS: readonly Migration[] = [
         ON events (mission_id, seq);
     `,
   },
+  {
+    version: 2,
+    name: "mission-policy-and-completion",
+    sql: `
+      CREATE TABLE mission_policies (
+        mission_id TEXT PRIMARY KEY REFERENCES missions(id),
+        borrower_account_id TEXT NOT NULL,
+        spending_cap_tinybar TEXT NOT NULL CHECK (
+          spending_cap_tinybar = '0' OR (
+            spending_cap_tinybar GLOB '[1-9]*' AND
+            spending_cap_tinybar NOT GLOB '*[^0-9]*'
+          )
+        ),
+        session_id TEXT NOT NULL,
+        session_cap_tinybar TEXT NOT NULL CHECK (
+          session_cap_tinybar = '0' OR (
+            session_cap_tinybar GLOB '[1-9]*' AND
+            session_cap_tinybar NOT GLOB '*[^0-9]*'
+          )
+        ),
+        target_sha256 TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        provider_account_id TEXT NOT NULL,
+        provider_endpoint TEXT NOT NULL,
+        provider_capability TEXT NOT NULL,
+        provider_price_tinybar TEXT NOT NULL CHECK (
+          provider_price_tinybar = '0' OR (
+            provider_price_tinybar GLOB '[1-9]*' AND
+            provider_price_tinybar NOT GLOB '*[^0-9]*'
+          )
+        ),
+        provider_reputation_score REAL NOT NULL CHECK (
+          provider_reputation_score >= 0 AND provider_reputation_score <= 1
+        ),
+        provider_expected_latency_ms INTEGER NOT NULL CHECK (provider_expected_latency_ms >= 0),
+        approved_recipients_root TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE mission_completions (
+        mission_id TEXT PRIMARY KEY REFERENCES missions(id),
+        report_sha256 TEXT NOT NULL,
+        settlement_tx_id TEXT NOT NULL UNIQUE,
+        settlement_payer_account_id TEXT NOT NULL,
+        settlement_recipient_account_id TEXT NOT NULL,
+        settlement_asset TEXT NOT NULL,
+        settlement_amount_tinybar TEXT NOT NULL CHECK (
+          settlement_amount_tinybar = '0' OR (
+            settlement_amount_tinybar GLOB '[1-9]*' AND
+            settlement_amount_tinybar NOT GLOB '*[^0-9]*'
+          )
+        ),
+        settlement_confirmed_at TEXT NOT NULL,
+        callback_body_sha256 TEXT NOT NULL,
+        accepted_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
 ] as const;
 
 interface AppliedMigrationRow {

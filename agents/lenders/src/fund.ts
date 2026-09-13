@@ -13,6 +13,7 @@ import {
 import {
   canonicalHash,
   CreditProtocolError,
+  loanIdForOffer,
   type SignedCreditAcceptance,
 } from "@koven/credit-protocol";
 import { ErrorCode, type CreditOffer, type CreditRequest } from "@koven/domain";
@@ -373,7 +374,7 @@ export class FundingService {
       throw new CreditProtocolError(ErrorCode.SETTLEMENT_UNCONFIRMED, "Funding has no transaction ID");
     }
     return LoanRegistrationRequestSchema.parse({
-      loanId: `loan-${canonicalHash({ offerId: offer.id }).slice(0, 32)}`,
+      loanId: loanIdForOffer(offer.id),
       request: { ...request, principalTinybar: request.principalTinybar.toString(10) },
       offer: {
         ...offer,

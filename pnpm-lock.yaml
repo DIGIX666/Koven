@@ -7,6 +7,7 @@ settings:
 overrides:
   '@hiero-ledger/sdk': 2.86.2
   '@ethersproject/providers@5.8.0>ws': 8.21.0
+  ethers@6.16.0>ws: 8.21.0
   jsonpath@1.3.0>underscore: 1.13.8
 
 importers:
@@ -51,7 +52,23 @@ importers:
         specifier: 2.1.9
         version: 2.1.9(@types/node@22.18.6)(terser@5.51.2)
 
-  agents/consumer: {}
+  agents/consumer:
+    dependencies:
+      '@koven/credit-protocol':
+        specifier: workspace:*
+        version: link:../../packages/credit-protocol
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../../packages/hedera
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
 
   agents/lenders:
     dependencies:
@@ -89,6 +106,12 @@ importers:
       '@koven/audit':
         specifier: workspace:*
         version: link:../../packages/audit
+      '@koven/consumer-agent':
+        specifier: workspace:*
+        version: link:../../agents/consumer
+      '@koven/credit-protocol':
+        specifier: workspace:*
+        version: link:../../packages/credit-protocol
       '@koven/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -320,7 +343,48 @@ importers:
         specifier: 5.0.3
         version: 5.0.3
 
-  tests/e2e: {}
+  tests/e2e:
+    dependencies:
+      '@koven/consumer-agent':
+        specifier: workspace:*
+        version: link:../../agents/consumer
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../../packages/hedera
+      '@koven/lender-agents':
+        specifier: workspace:*
+        version: link:../../agents/lenders
+      '@koven/orchestrator':
+        specifier: workspace:*
+        version: link:../../apps/orchestrator
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@koven/resource-server':
+        specifier: workspace:*
+        version: link:../../services/resource-server
+      '@koven/restricted-signer':
+        specifier: workspace:*
+        version: link:../../services/restricted-signer
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@x402/core':
+        specifier: 2.24.0
+        version: 2.24.0
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
+    devDependencies:
+      tsx:
+        specifier: 4.20.6
+        version: 4.20.6
 
 packages:
 
@@ -2831,18 +2895,6 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.17.1:
-    resolution: {integrity: sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@8.21.0:
     resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
     engines: {node: '>=10.0.0'}
@@ -4459,7 +4511,7 @@ snapshots:
       '@types/node': 22.7.5
       aes-js: 4.0.0-beta.5
       tslib: 2.7.0
-      ws: 8.17.1
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -5646,8 +5698,6 @@ snapshots:
       strip-ansi: 6.0.1
 
   wrappy@1.0.2: {}
-
-  ws@8.17.1: {}
 
   ws@8.21.0: {}
 

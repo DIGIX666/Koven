@@ -7,6 +7,7 @@ import {
   canonicalJson,
   computeTermsHash,
   CreditProtocolError,
+  loanIdForOffer,
   repaymentTerms,
   signCreditAcceptance,
   signCreditOffer,
@@ -216,6 +217,9 @@ describe("signed credit protocol", () => {
   });
 
   it("derives repayment destination and exact principal plus fee", () => {
+    expect(loanIdForOffer("offer-1")).toMatch(/^loan-[a-f0-9]{32}$/);
+    expect(loanIdForOffer("offer-1")).toBe(loanIdForOffer("offer-1"));
+    expect(loanIdForOffer("offer-1")).not.toBe(loanIdForOffer("offer-2"));
     expect(repaymentTerms(unsignedOffer({
       principalTinybar: 18_446_744_073_709_551_000n,
       feeTinybar: 615n,

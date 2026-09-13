@@ -9,9 +9,7 @@ import {
   type PersistedMission,
 } from "@koven/persistence";
 import {
-  CallbackHeadersSchema,
   CallbackResponseSchema,
-  CompletionCallbackSchema,
   CreateMissionRequestSchema,
   ErrorResponseSchema,
   MAX_HTTP_BODY_BYTES,
@@ -21,13 +19,14 @@ import {
 } from "@koven/schemas";
 import { ZodError, type ZodType } from "zod";
 
-import { CallbackAuthenticationError, type CompletionHandler } from "../callbacks/index.js";
-import type { MissionWorkflow } from "../workflows/index.js";
+import { CompletionError, type CompletionHandler } from "../callbacks/index.js";
+import { RepaymentRequestError, type MissionWorkflow, type RepaymentWorkflow } from "../workflows/index.js";
 
 export interface OrchestratorAppOptions {
   database: KovenDatabase;
   workflow: MissionWorkflow;
   completionHandler: CompletionHandler;
+  repaymentWorkflow: RepaymentWorkflow;
 }
 
 class ResponseContractError extends Error {}
@@ -64,8 +63,12 @@ const missionResponse = (mission: PersistedMission) => ({
 
 export function createOrchestratorApp(options: OrchestratorAppOptions): Application {
   const app = express();
+  const rawBodies = new WeakMap<object, Buffer>();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: MAX_HTTP_BODY_BYTES }));
+  app.use(express.json({
+    limit: MAX_HTTP_BODY_BYTES,
+    verify: (request, _response, body) => rawBodies.set(request, Buffer.from(body)),
+  }));
 
   app.post("/missions", asyncRoute(async (request, response) => {
     const input = CreateMissionRequestSchema.parse(request.body);
@@ -89,19 +92,16 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
   }));
 
   app.post("/callbacks/mission-complete", asyncRoute(async (request, response) => {
-    // Provider HMAC verification and its timestamp window are implemented in B2.4.
-    const callback = CompletionCallbackSchema.parse(request.body);
-    const headers = CallbackHeadersSchema.parse({
-      "idempotency-key": request.get("idempotency-key"),
-      "x-callback-timestamp": request.get("x-callback-timestamp"),
-      "x-callback-signature": request.get("x-callback-signature"),
+    const result = await options.completionHandler.receive({
+      body: rawBodies.get(request) ?? Buffer.alloc(0),
+      headers: {
+        idempotencyKey: request.get("idempotency-key"),
+        timestamp: request.get("x-callback-timestamp"),
+        signature: request.get("x-callback-signature"),
+      },
     });
-    const result = await options.completionHandler.receive(callback, {
-      idempotencyKey: headers["idempotency-key"],
-      timestamp: headers["x-callback-timestamp"],
-      signature: headers["x-callback-signature"],
-    });
-    response.status(202).json(responseContract(CallbackResponseSchema, result));
+    await options.repaymentWorkflow.run(result.missionId);
+    response.status(202).json(responseContract(CallbackResponseSchema, result.response));
   }));
 
   const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
@@ -119,8 +119,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Applicat
       detail = error instanceof ZodError
         ? error.issues.map(issue => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; ")
         : "Request body must contain valid JSON";
-    } else if (error instanceof CallbackAuthenticationError) {
-      status = 401;
+    } else if (error instanceof CompletionError || error instanceof RepaymentRequestError) {
+      status = error.status;
       code = error.code;
       detail = error.message;
     } else if (error instanceof PersistenceNotFoundError) {

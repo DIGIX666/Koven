@@ -18,6 +18,7 @@ export const PersistenceConflict = {
   ENTITY_ALREADY_EXISTS: "entity_already_exists",
   EVENT_ALREADY_EXISTS: "event_already_exists",
   REPAYMENT_TRANSACTION_CONFLICT: "repayment_transaction_conflict",
+  MISSION_POLICY_CONFLICT: ErrorCode.MISSION_POLICY_CONFLICT,
 } as const;
 
 export type PersistenceConflict = (typeof PersistenceConflict)[keyof typeof PersistenceConflict];
