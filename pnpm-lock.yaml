@@ -250,6 +250,13 @@ importers:
         version: link:../../services/resource-server
 
   packages/zk-policy:
+    dependencies:
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../schemas
     devDependencies:
       circomlib:
         specifier: 2.0.5
