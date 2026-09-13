@@ -12,6 +12,7 @@ import {
   createLoan,
   createMission,
   getMission,
+  recordMissionSpending,
   saveMissionPolicy,
   type KovenDatabase,
   type PersistedMission,
@@ -238,10 +239,13 @@ export class MissionWorkflow {
                 return;
               case "service-paid":
                 this.assertScanResult(id, targetSha256, provider, event.scan);
+                // The settled amount becomes the mission's spent total in the same transaction as the transition.
                 await move("service-paid", "x402-settled", {
                   providerId: provider.id,
                   amountTinybar: event.scan.receipt.amountTinybar,
-                }, event.scan.receipt.transactionId);
+                }, event.scan.receipt.transactionId, () => {
+                  recordMissionSpending(this.options.database, id, event.scan.receipt.amountTinybar);
+                });
                 return;
             }
           },

@@ -24,6 +24,8 @@ import {
   listMissionEvents,
   MAX_TINYBAR,
   openDatabase,
+  PersistenceNotFoundError,
+  recordMissionSpending,
   reserveSpending,
   saveMissionCompletion,
   saveMissionPolicy,
@@ -239,6 +241,17 @@ describe("SQLite persistence", () => {
     ]) {
       expect(duplicate).toThrow(expect.objectContaining({ name: "PersistenceConflictError" }));
     }
+  });
+
+  it("accumulates settled spending on the mission and refuses unknown or non-positive amounts", () => {
+    const database = openDatabase(":memory:");
+    databases.push(database);
+    createMission(database, mission("mission-1", 100n, 0n));
+    recordMissionSpending(database, "mission-1", 25n);
+    recordMissionSpending(database, "mission-1", 5n);
+    expect(getMission(database, "mission-1")?.spentTinybar).toBe(30n);
+    expect(() => recordMissionSpending(database, "mission-1", 0n)).toThrow(RangeError);
+    expect(() => recordMissionSpending(database, "mission-missing", 1n)).toThrow(PersistenceNotFoundError);
   });
 
   it("rejects invalid persisted mission and loan states", () => {
