@@ -10,7 +10,7 @@ import { ZodError } from "zod";
 
 import { normalizeChallenge } from "@koven/x402";
 
-import { SCAN_AUTHORIZATION_DOMAIN, verifyDomain, withoutSignature } from "../src/canonical.js";
+import { canonicalHash, SCAN_AUTHORIZATION_DOMAIN, verifyDomain, withoutSignature } from "../src/canonical.js";
 import { PaymentGate } from "../src/gate.js";
 import { ProofPolicy } from "../src/proof.js";
 import type { SignerStore } from "../src/store.js";
@@ -235,10 +235,34 @@ describe("PaymentGate /authorize in zk mode", () => {
     await failure(attempt(fakeBundle([commitment, root, "5000000"], { circuitId: "koven-policy-v2" })), "circuit_id_mismatch", 403);
     await failure(attempt(fakeBundle([commitment, "1", "5000000"])), "recipient_not_approved", 403);
     await failure(attempt(fakeBundle([commitment, root, "5000001"])), "cap_exceeded", 403);
+    // A proof under a smaller cap is sound but is not this mission's policy statement.
+    await failure(attempt(fakeBundle([commitment, root, "4999999"])), "mission_policy_mismatch", 403);
     expect(getSpendingReservation(store.database, "mission-1", "2")).toBeUndefined();
 
     const rejecting = await zkGate(store, false);
     await failure(rejecting.gate.authorize({ missionId: "mission-1", requirements: requirements(), nonce: "2", bundle: fakeBundle([commitment, root, "5000000"]) }), "proof_invalid", 403);
+  });
+
+  it("signs only the payment intent bound into the mission's accepted credit", async () => {
+    const store = memoryStore();
+    stores.push(store);
+    const { gate, proofPolicy, root } = await zkGate(store);
+    store.registerMissionPolicy(zkPolicy(root), now.toISOString(), account => proofPolicy.rootFor(account));
+    const bound = challengeFor("mission-1", "1");
+    const intent = { ...bound, amountTinybar: bound.amountTinybar.toString(10) };
+    const offer = { id: "offer-1", requestId: "credit-1", lenderAccountId: "0.0.4001", principalTinybar: "1000000", feeTinybar: "1", termSeconds: 3_600, expiresAt: "2026-09-12T13:00:00.000Z", termsHash: "c".repeat(64), signature: "d".repeat(128) };
+    store.saveAcceptance(offer, {
+      requestId: "credit-1", missionId: "mission-1", borrowerAccountId: consumerAccountId, lenderAccountId: "0.0.4001", offerId: "offer-1",
+      termsHash: "c".repeat(64), expiresAt: "2026-09-12T13:00:00.000Z", paymentIntentHash: canonicalHash(intent), paymentProofBundleHash: "e".repeat(64),
+    }, "f".repeat(128), now.toISOString());
+
+    // Same mission, valid proof, but another nonce than the funded intent.
+    const other = proofPolicy.commitmentFor(challengeFor("mission-1", "2"));
+    await failure(gate.authorize({ missionId: "mission-1", requirements: requirements(), nonce: "2", bundle: fakeBundle([other, root, "5000000"]) }), "challenge_binding_mismatch", 400);
+    expect(getSpendingReservation(store.database, "mission-1", "2")).toBeUndefined();
+
+    const response = await gate.authorize({ missionId: "mission-1", requirements: requirements(), nonce: "1", bundle: fakeBundle([proofPolicy.commitmentFor(bound), root, "5000000"]) });
+    expect(response.paymentAuthorization.nonce).toBe("1");
   });
 
   it("only registers policies carrying the selected provider's singleton root", async () => {

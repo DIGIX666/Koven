@@ -208,8 +208,8 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     }),
   };
   const transfers = new Map<string, TransferRecord>();
-  // The borrower holds nothing: the loan principal must cover the proven payment amount (M3).
-  const balances = new Map([[consumerAccountId, 0n]]);
+  // A partial balance: the loan still covers the whole payment amount.
+  const balances = new Map([[consumerAccountId, 1n]]);
   let clock = Date.now();
   const settledAt = new Date(clock).toISOString();
   let paymentTxId: string | undefined;

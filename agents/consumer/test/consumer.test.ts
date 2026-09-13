@@ -54,7 +54,7 @@ const unsignedRequest = (overrides: Partial<UnsignedCreditRequest> = {}): Unsign
   id: "credit-1",
   missionId: "mission-1",
   borrowerAccountId,
-  principalTinybar: 99n,
+  principalTinybar: 100n,
   requestedTermSeconds: 3_600,
   purposeHash: canonicalHash({ missionId: "mission-1", targetSha256 }),
   createdAt: now,
@@ -71,7 +71,7 @@ const offerTerms = (overrides: Partial<Omit<CreditOffer, "signature">> = {}) => 
   id: "offer-1",
   requestId: "credit-1",
   lenderAccountId,
-  principalTinybar: 99n,
+  principalTinybar: 100n,
   feeTinybar: 5n,
   termSeconds: 3_600,
   expiresAt: "2026-09-13T10:05:00.000Z",
@@ -461,7 +461,8 @@ describe("ConsumerMissionExecutor", () => {
       provider,
     }, { onProgress: progress });
 
-    expect(result.credit?.request.principalTinybar).toBe(99n);
+    // The whole payment is borrowed, not the shortfall: the principal must cover the bound intent.
+    expect(result.credit?.request.principalTinybar).toBe(100n);
     expect(result.credit?.fundingTxId).toBe(fundingTxId);
     expect(order).toEqual([
       "prepare",

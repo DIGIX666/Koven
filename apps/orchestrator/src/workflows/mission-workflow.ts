@@ -25,12 +25,6 @@ import type { MissionStateMachine } from "../state/index.js";
 
 class PolicyRejectedError extends Error {}
 
-/**
- * A mission whose provider selection failed has no approved recipient, hence
- * no tree; `0` is stored in place of a root and no proof can match it.
- */
-const NO_APPROVED_RECIPIENTS_ROOT = "0";
-
 export interface MissionPolicyRegistrar {
   register(policy: HttpRequest<"registerMissionPolicy">): Promise<void>;
 }
@@ -68,6 +62,9 @@ export class MissionWorkflow {
     if (options.policyRegistrars.length === 0) {
       throw new Error("At least one trusted mission-policy registrar is required");
     }
+    if (options.providers.length === 0) {
+      throw new Error("At least one provider is required");
+    }
   }
 
   /** Singleton recipient root of the selected provider, as the signer and lender recompute it. */
@@ -83,9 +80,11 @@ export class MissionWorkflow {
     const spendingCapTinybar = BigInt(request.maxBudgetTinybar);
     const ranked = rankProviders(this.options.providers, spendingCapTinybar);
     const selected = ranked[0];
-    const approvedRecipientsRoot = selected === undefined
-      ? NO_APPROVED_RECIPIENTS_ROOT
-      : await this.recipientRoot(selected.provider.accountId);
+    if (selected === undefined) throw new Error("No provider is configured");
+    const provider = selected.provider;
+    // The selected provider is the mission's whole approved recipient set, even
+    // when its price is then rejected against the budget.
+    const approvedRecipientsRoot = await this.recipientRoot(provider.accountId);
     createMission(this.options.database, {
       id,
       state: "created",
@@ -118,11 +117,6 @@ export class MissionWorkflow {
         targetRef: request.targetRef,
         targetSha256,
       });
-      if (selected === undefined) {
-        await move("payment-preparation", "providers-ranked", { ranked });
-        throw new PolicyRejectedError("No provider is available");
-      }
-      const provider = selected.provider;
       if (provider.priceTinybar > spendingCapTinybar) {
         await move("payment-preparation", "providers-ranked", { ranked });
         throw new PolicyRejectedError("Selected provider exceeds the mission budget");

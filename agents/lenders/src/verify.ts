@@ -88,6 +88,10 @@ export class LenderProofVerifier {
     if (!result.ok) {
       throw new CreditProtocolError(result.code, PROOF_FAILURE_DETAIL[result.code] ?? "Proof bundle was refused");
     }
+    // The proof must have been made under this mission's cap, not merely a smaller one.
+    if (paymentProofBundle.publicSignals[2] !== policy.spendingCapTinybar) {
+      throw new CreditProtocolError(ErrorCode.MISSION_POLICY_MISMATCH, "Proof cap is not the mission spending cap");
+    }
   }
 }
 

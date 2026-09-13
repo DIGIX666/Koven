@@ -152,6 +152,7 @@ describe("lender-side independent proof verification", () => {
     const cases: [ProofBundle, string, number][] = [
       [bundleFor(wire, { publicSignals: [commitmentFor(wire), verifier.rootFor("0.0.31"), "1000"] }), ErrorCode.RECIPIENT_NOT_APPROVED, 403],
       [bundleFor(wire, { publicSignals: [commitmentFor(wire), singletonRoot, "1001"] }), ErrorCode.CAP_EXCEEDED, 403],
+      [bundleFor(wire, { publicSignals: [commitmentFor(wire), singletonRoot, "999"] }), ErrorCode.MISSION_POLICY_MISMATCH, 403],
       [bundleFor(wire, { publicSignals: [commitmentFor(intent({ nonce: "8" })), singletonRoot, "1000"] }), ErrorCode.CHALLENGE_BINDING_MISMATCH, 400],
       [bundleFor(wire, { circuitId: "koven-policy-v0" }), ErrorCode.CIRCUIT_ID_MISMATCH, 403],
     ];

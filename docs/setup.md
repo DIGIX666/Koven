@@ -143,7 +143,7 @@ reads:
 | Variable | Meaning |
 | --- | --- |
 | `RESTRICTED_SIGNER_HOST` | Interface the listener binds to; defaults to `127.0.0.1` |
-| `SIGNER_PROOF_MODE` | Payment gate mode, never a request field: `deterministic` (default, M2) or `zk` (M3: `/authorize` and `/sign-credit-acceptance` require a verified policy proof, registration requires the selected provider's singleton root) |
+| `SIGNER_PROOF_MODE` | Payment gate mode, never a request field: `deterministic` (default, M2) or `zk` (M3: `/authorize` and `/sign-credit-acceptance` require a verified policy proof, registration requires the selected provider's singleton root). Whenever a signed acceptance bound a payment intent, `/authorize` signs only that intent |
 | `SIGNER_VERIFICATION_KEY_PATH` | zk mode: path to the signer's own copy of `verification_key.json` (from `pnpm zk:build`) |
 | `SIGNER_TRUSTED_VKEY_SHA256` | zk mode: reviewed SHA-256 pin of that file (`artifacts-manifest.json` → `vkeyHash`); startup refuses a file that hashes differently, and `GET /health` reports the pinned hash |
 | `SIGNER_CONSUMER_CREDENTIAL` | Credential presented by the consumer agent on `/authorize`, `/sign-credit-request` and `/sign-credit-acceptance` |
@@ -167,7 +167,7 @@ pnpm --filter @koven/restricted-signer dev
 ```
 
 `GET /health` answers `{ "status": "ok", "circuitId": "koven-policy-v1", "vkeyHash": null }`
-until M3 pins a verification key.
+in deterministic mode; in zk mode `vkeyHash` is the pinned SHA-256 of the signer's key.
 
 ## Checklist for a new local setup
 

@@ -1,5 +1,5 @@
 import { type ClientHederaSigner, createClientHederaSigner, inspectHederaTransaction, Transaction } from "@x402/hedera";
-import { ErrorCode } from "@koven/domain";
+import { ErrorCode, type NormalizedChallenge } from "@koven/domain";
 import type { PrivateKey } from "@koven/hedera";
 import { AuthorizeRequestSchema, AuthorizeResponseSchema, AuthorizeZkRequestSchema, type HttpRequest, type HttpResponse } from "@koven/schemas";
 import {
@@ -10,7 +10,7 @@ import {
   paymentCommitment,
 } from "@koven/x402";
 
-import { SCAN_AUTHORIZATION_DOMAIN, sha256Hex, signDomain } from "./canonical.js";
+import { canonicalHash, SCAN_AUTHORIZATION_DOMAIN, sha256Hex, signDomain } from "./canonical.js";
 import { fail } from "./errors.js";
 import type { ProofMode, ProofPolicy } from "./proof.js";
 import type { SignerStore, WireAuthorization } from "./store.js";
@@ -60,6 +60,15 @@ export interface PaymentGateOptions {
   /** Test seam only; production always builds with the consumer key held here. */
   readonly clientSigner?: ClientHederaSigner;
 }
+
+/** Wire form of a normalized challenge, as hashed into `paymentIntentHash` at acceptance. */
+const intentWire = (challenge: NormalizedChallenge) => ({
+  amountTinybar: challenge.amountTinybar.toString(10),
+  recipientAccountId: challenge.recipientAccountId,
+  nonce: challenge.nonce,
+  resourceHash: challenge.resourceHash,
+  missionId: challenge.missionId,
+});
 
 /** Valid-start plus valid-duration of the signed transaction, in Unix milliseconds. */
 export function transactionValidUntil(transactionBase64: string, transactionId: string): number {
@@ -113,6 +122,12 @@ export class PaymentGate {
     } catch (error) {
       if (error instanceof ChallengeRejectedError) fail(ErrorCode.CHALLENGE_BINDING_MISMATCH, error.message);
       throw error;
+    }
+    // A signed acceptance binds one payment intent per mission; the payment must
+    // be that intent, so the lender funded exactly what is paid.
+    const accepted = this.options.store.getAcceptance(policy.missionId)?.acceptance;
+    if (accepted?.paymentIntentHash !== undefined && accepted.paymentIntentHash !== canonicalHash(intentWire(challenge))) {
+      fail(ErrorCode.CHALLENGE_BINDING_MISMATCH, "Challenge is not the payment intent bound into the accepted credit");
     }
     // M3: the proof is checked ahead of everything else, against a commitment
     // this signer computes itself, the mission's stored root and its cap.

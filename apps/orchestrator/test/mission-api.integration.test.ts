@@ -62,7 +62,6 @@ interface RuntimeOptions {
   readonly borrowerBalance?: bigint;
   readonly budgetTinybar?: bigint;
   readonly providerPriceTinybar?: bigint;
-  readonly noProviders?: boolean;
   readonly repaymentFailures?: number;
   readonly settlementFailures?: number;
   readonly settlementMismatch?: boolean;
@@ -199,7 +198,7 @@ const runtime = (options: RuntimeOptions = {}) => {
     stateMachine,
     consumer,
     policyRegistrars,
-    providers: options.noProviders ? [] : [provider],
+    providers: [provider],
     borrowerAccountId: "0.0.10",
     now: () => timestamp,
     missionId: () => "mission-1",
@@ -553,6 +552,14 @@ describe("orchestrator mission and trusted completion API", () => {
   it("preserves request errors and closes policy rejections without payment", async () => {
     const test = runtime({ budgetTinybar: 50n, providerPriceTinybar: 100n });
     const baseUrl = await listen(test.app);
+    expect(() => new MissionWorkflow({
+      database: test.database,
+      stateMachine: new MissionStateMachine(test.database, test.sink),
+      consumer: test.consumer,
+      policyRegistrars: test.policyRegistrars,
+      providers: [],
+      borrowerAccountId: "0.0.10",
+    })).toThrow(/At least one provider/);
     const tooLarge = await fetch(`${baseUrl}/missions`, {
       method: "POST",
       headers: { "content-type": "application/json" },

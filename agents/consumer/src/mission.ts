@@ -142,10 +142,11 @@ export class ConsumerMissionExecutor {
       });
     }
 
+    // An insufficient balance borrows the whole payment amount: the protocol
+    // requires the accepted principal to cover the bound intent, so the lender
+    // can verify that what it funds is exactly what is paid.
     const balance = await this.options.balance.getBalanceTinybar(this.options.borrowerAccountId);
-    const principalTinybar = input.provider.priceTinybar > balance
-      ? input.provider.priceTinybar - balance
-      : 0n;
+    const principalTinybar = input.provider.priceTinybar > balance ? input.provider.priceTinybar : 0n;
 
     let credit: ConsumerMissionResult["credit"];
     if (principalTinybar > 0n) {

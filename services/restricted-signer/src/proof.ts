@@ -65,6 +65,10 @@ export class ProofPolicy {
       }[result.code];
       fail(result.code, detail);
     }
+    // A3.3: the proof must have been made under this mission's cap, not merely a smaller one.
+    if (bundle.publicSignals[2] !== policy.spendingCapTinybar) {
+      fail(ErrorCode.MISSION_POLICY_MISMATCH, "Policy proof cap is not the mission spending cap");
+    }
     return commitment;
   }
 }
