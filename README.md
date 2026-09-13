@@ -117,7 +117,10 @@ currently compiles only its tool configuration. The E2E workspace exercises real
 HTTP services offline by default; its separate testnet command requires disposable
 funded credentials from `.env`. The testnet command performs real HBAR transfers
 and retains its timestamped SQLite evidence under `.koven-testnet/`; run it only
-with low-balance test accounts. This build does not compile Circom artifacts.
+with low-balance test accounts. If a run is interrupted after a transaction, resume
+that exact run without funding again with
+`KOVEN_TESTNET_RESUME_DIRECTORY=<printed-directory> pnpm test:e2e:testnet`.
+This build does not compile Circom artifacts.
 
 When adding a workspace, add its build configuration to the root `tsconfig.json`.
 When adding a workspace dependency, also reference its `tsconfig.build.json` from

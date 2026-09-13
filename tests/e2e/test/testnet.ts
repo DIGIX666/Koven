@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   ConsumerMissionExecutor,
@@ -39,6 +40,7 @@ import {
   type KovenDatabase,
 } from "@koven/persistence";
 import {
+  callbackSignature,
   CallbackDispatcher,
   createPaidScanServer,
   MirrorSettlementConfirmer,
@@ -123,7 +125,11 @@ if (priceTinybar <= 0n) throw new Error("Provider price must be positive");
 if (spendingCapTinybar < priceTinybar) throw new Error("Mission spending cap must cover the provider price");
 
 const runId = `${new Date().toISOString().replaceAll(":", "-")}-${randomBytes(4).toString("hex")}`;
-const runDirectory = resolve(env.KOVEN_TESTNET_RUN_DIR || ".koven-testnet", runId);
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const resumeDirectory = env.KOVEN_TESTNET_RESUME_DIRECTORY?.trim();
+const runDirectory = resumeDirectory
+  ? resolve(repositoryRoot, resumeDirectory)
+  : resolve(repositoryRoot, env.KOVEN_TESTNET_RUN_DIR || ".koven-testnet", runId);
 const callbackSecret = randomBytes(32);
 const callbackSecretText = callbackSecret.toString("base64url");
 const consumerCredential = credential();
@@ -159,26 +165,30 @@ let providerStore: ProviderStore | undefined;
 let lenderClient: ReturnType<typeof createClient> | undefined;
 
 try {
-  await mkdir(runDirectory, { recursive: true });
-
-  lenderClient = createClient({
-    HEDERA_NETWORK: "testnet",
-    HEDERA_OPERATOR_ID: lenderAccountId,
-    HEDERA_OPERATOR_PRIVATE_KEY: lenderPrivateKeyText,
-  });
-  const repaymentFeeTinybar = (priceTinybar * 100n + 9_999n) / 10_000n;
-  const feeReserveTinybar = BigInt(env.KOVEN_TESTNET_FEE_RESERVE_TINYBAR || "1000000");
-  if (feeReserveTinybar < 0n) throw new Error("Testnet fee reserve cannot be negative");
-  const [consumerBalance, lenderBalance] = await Promise.all([
-    getBalanceTinybar(lenderClient, consumerAccountId),
-    getBalanceTinybar(lenderClient, lenderAccountId),
-  ]);
-  if (consumerBalance < priceTinybar + repaymentFeeTinybar + feeReserveTinybar) {
-    throw new Error("Consumer testnet balance is too low for repayment and network fees");
+  if (resumeDirectory) {
+    await Promise.all(["signer.db", "orchestrator.db", "provider.db"].map(file => access(resolve(runDirectory, file))));
+  } else {
+    await mkdir(runDirectory, { recursive: true });
+    lenderClient = createClient({
+      HEDERA_NETWORK: "testnet",
+      HEDERA_OPERATOR_ID: lenderAccountId,
+      HEDERA_OPERATOR_PRIVATE_KEY: lenderPrivateKeyText,
+    });
+    const repaymentFeeTinybar = (priceTinybar * 100n + 9_999n) / 10_000n;
+    const feeReserveTinybar = BigInt(env.KOVEN_TESTNET_FEE_RESERVE_TINYBAR || "1000000");
+    if (feeReserveTinybar < 0n) throw new Error("Testnet fee reserve cannot be negative");
+    const [consumerBalance, lenderBalance] = await Promise.all([
+      getBalanceTinybar(lenderClient, consumerAccountId),
+      getBalanceTinybar(lenderClient, lenderAccountId),
+    ]);
+    if (consumerBalance < priceTinybar + repaymentFeeTinybar + feeReserveTinybar) {
+      throw new Error("Consumer testnet balance is too low for repayment and network fees");
+    }
+    if (lenderBalance < priceTinybar + feeReserveTinybar) {
+      throw new Error("Lender testnet balance is too low for funding and network fees");
+    }
   }
-  if (lenderBalance < priceTinybar + feeReserveTinybar) {
-    throw new Error("Lender testnet balance is too low for funding and network fees");
-  }
+  process.stdout.write(`${resumeDirectory ? "Resuming" : "Starting"} testnet run in ${runDirectory}\n`);
 
   signerRuntime = await createSignerRuntime({
     HEDERA_NETWORK: "testnet",
@@ -201,34 +211,36 @@ try {
   });
   signerServer = await signerRuntime.listen();
 
-  lenderDatabase = openDatabase(resolve(runDirectory, "lender.db"));
-  const lenderStore = new LenderStore(lenderDatabase);
-  const fundingService = new FundingService({
-    store: lenderStore,
-    gateway: new AgentKitFundingGateway(
-      lenderClient,
+  if (!resumeDirectory) {
+    lenderDatabase = openDatabase(resolve(runDirectory, "lender.db"));
+    const lenderStore = new LenderStore(lenderDatabase);
+    const fundingService = new FundingService({
+      store: lenderStore,
+      gateway: new AgentKitFundingGateway(
+        lenderClient!,
+        lenderAccountId,
+        new MirrorNodeFundingReconciler(mirrorNodeUrl),
+      ),
+      registrationClient: new HttpLoanRegistrationClient(signerUrl, lenderCredential),
       lenderAccountId,
-      new MirrorNodeFundingReconciler(mirrorNodeUrl),
-    ),
-    registrationClient: new HttpLoanRegistrationClient(signerUrl, lenderCredential),
-    lenderAccountId,
-  });
-  lenderServer = createLenderApp({
-    store: lenderStore,
-    policy: new ConservativeLenderPolicy({
-      maxPrincipalTinybar: spendingCapTinybar,
-      maxTermSeconds: 3_600,
-      minimumReputation: 0,
-      feeBasisPoints: 100,
-    }),
-    fundingService,
-    lenderAccountId,
-    lenderPrivateKey: lenderKey,
-    operatorCredential: lenderOperatorCredential,
-    borrowerPublicKey: accountId => accountId === consumerAccountId ? consumerKey.publicKey : undefined,
-    borrowerReputation: () => 1,
-  }).listen(lenderPort, "127.0.0.1");
-  await listen(lenderServer);
+    });
+    lenderServer = createLenderApp({
+      store: lenderStore,
+      policy: new ConservativeLenderPolicy({
+        maxPrincipalTinybar: spendingCapTinybar,
+        maxTermSeconds: 3_600,
+        minimumReputation: 0,
+        feeBasisPoints: 100,
+      }),
+      fundingService,
+      lenderAccountId,
+      lenderPrivateKey: lenderKey,
+      operatorCredential: lenderOperatorCredential,
+      borrowerPublicKey: accountId => accountId === consumerAccountId ? consumerKey.publicKey : undefined,
+      borrowerReputation: () => 1,
+    }).listen(lenderPort, "127.0.0.1");
+    await listen(lenderServer);
+  }
 
   const repaymentClient = new HttpRepaymentClient({
     baseUrl: signerUrl,
@@ -280,7 +292,7 @@ try {
   let loseFirstCallbackResponse = true;
   const lossyCallbackFetch: typeof fetch = async (input, init) => {
     const response = await fetch(input, init);
-    if (loseFirstCallbackResponse) {
+    if (loseFirstCallbackResponse && response.status === 202) {
       loseFirstCallbackResponse = false;
       await response.arrayBuffer();
       throw new TypeError("Injected lost callback response");
@@ -308,31 +320,99 @@ try {
   providerServer = paidScan.app.listen(providerPort, "127.0.0.1");
   await listen(providerServer);
 
-  const createdResponse = await fetch(`${orchestratorUrl}/missions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      prompt: "Audit the Solidity contract",
-      maxBudgetTinybar: spendingCapTinybar.toString(10),
-      targetRef: "Vault.sol",
-      source: "pragma solidity ^0.8.24; contract Vault { function value() external pure returns (uint256) { return 1; } }",
-    }),
-  });
-  if (createdResponse.status !== 201) {
-    throw new Error(`Mission creation returned HTTP ${createdResponse.status}: ${await createdResponse.text()}`);
+  run: {
+  let missionId: string;
+  if (resumeDirectory) {
+    const rows = orchestratorDatabase.prepare(`
+      SELECT id, state FROM missions ORDER BY created_at
+    `).all() as { id: string; state: string }[];
+    if (rows.length !== 1
+      || !["running", "completed", "repayment-pending", "repaid", "closed"].includes(rows[0]!.state)) {
+      throw new Error("Resume directory must contain exactly one recoverable mission");
+    }
+    missionId = rows[0]!.id;
+  } else {
+    const createdResponse = await fetch(`${orchestratorUrl}/missions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prompt: "Audit the Solidity contract",
+        maxBudgetTinybar: spendingCapTinybar.toString(10),
+        targetRef: "Vault.sol",
+        source: "pragma solidity ^0.8.24; contract Vault { function value() external pure returns (uint256) { return 1; } }",
+      }),
+    });
+    if (createdResponse.status !== 201) {
+      throw new Error(`Mission creation returned HTTP ${createdResponse.status}: ${await createdResponse.text()}`);
+    }
+    const created = MissionSchema.parse(await createdResponse.json());
+    if (created.state !== "running") throw new Error(`Mission stopped before callback in state ${created.state}`);
+    missionId = created.id;
   }
-  const created = MissionSchema.parse(await createdResponse.json());
-  if (created.state !== "running") throw new Error(`Mission stopped before callback in state ${created.state}`);
 
-  if (await paidScan.callbacks.dispatchDue() !== 1 || loseFirstCallbackResponse) {
-    throw new Error("The intentionally lost callback response was not exercised");
+  if (getMission(orchestratorDatabase, missionId)?.state === "closed") {
+    const callback = providerStore.database.prepare(`
+      SELECT idempotency_key, body FROM provider_callback_jobs WHERE status = 'delivered'
+    `).get() as { idempotency_key: string; body: string } | undefined;
+    const loanBeforeReplay = getLoanByMission(orchestratorDatabase, missionId);
+    if (!callback || !loanBeforeReplay?.fundingTxId || !loanBeforeReplay.repaymentTxId) {
+      throw new Error("Closed resume run has no delivered callback or repayment evidence");
+    }
+    const timestamp = Math.floor(Date.now() / 1_000).toString();
+    const replay = await fetch(`${orchestratorUrl}/callbacks/mission-complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": callback.idempotency_key,
+        "x-callback-timestamp": timestamp,
+        "x-callback-signature": callbackSignature(
+          callbackSecret,
+          timestamp,
+          callback.idempotency_key,
+          callback.body,
+        ),
+      },
+      body: callback.body,
+    });
+    const acknowledgement = CallbackResponseSchema.parse(await replay.json());
+    const loan = getLoanByMission(orchestratorDatabase, missionId);
+    const completion = getMissionCompletion(orchestratorDatabase, missionId);
+    if (replay.status !== 202
+      || acknowledgement.status !== "duplicate"
+      || !loan?.fundingTxId
+      || loan?.repaymentTxId !== loanBeforeReplay.repaymentTxId
+      || !completion) {
+      throw new Error("Closed mission replay did not preserve the existing repayment");
+    }
+    process.stdout.write(`${JSON.stringify({
+      missionId,
+      state: "closed",
+      recovery: "callback replayed after restart without a second repayment",
+      transactions: {
+        funding: { id: loan.fundingTxId, hashscan: explorerUrl(loan.fundingTxId) },
+        payment: { id: completion.settlementTxId, hashscan: explorerUrl(completion.settlementTxId) },
+        repayment: { id: loan.repaymentTxId, hashscan: explorerUrl(loan.repaymentTxId) },
+      },
+      databases: runDirectory,
+    }, null, 2)}\n`);
+    break run;
+  }
+
+  const callbackDeadline = Date.now() + 180_000;
+  while (loseFirstCallbackResponse && Date.now() < callbackDeadline) {
+    await paidScan.settlements.dispatchDue();
+    await paidScan.callbacks.dispatchDue(1);
+    if (loseFirstCallbackResponse) await new Promise(resolveWait => setTimeout(resolveWait, 250));
+  }
+  if (loseFirstCallbackResponse) {
+    throw new Error("No accepted callback response became available before the timeout");
   }
   await waitUntil(
-    () => getMission(orchestratorDatabase!, created.id)?.state === "closed",
+    () => getMission(orchestratorDatabase!, missionId)?.state === "closed",
     180_000,
     "Mission did not close after the first callback",
   );
-  const firstLoan = getLoanByMission(orchestratorDatabase, created.id);
+  const firstLoan = getLoanByMission(orchestratorDatabase, missionId);
   if (!firstLoan?.repaymentTxId) throw new Error("Repayment transaction was not persisted");
   const repaymentTxId = firstLoan.repaymentTxId;
 
@@ -373,18 +453,18 @@ try {
     throw new Error("Callback replay did not return the persisted duplicate acknowledgement");
   }
 
-  const mission = getMission(orchestratorDatabase, created.id);
-  const loan = getLoanByMission(orchestratorDatabase, created.id);
-  const completion = getMissionCompletion(orchestratorDatabase, created.id);
+  const mission = getMission(orchestratorDatabase, missionId);
+  const loan = getLoanByMission(orchestratorDatabase, missionId);
+  const completion = getMissionCompletion(orchestratorDatabase, missionId);
   if (mission?.state !== "closed" || !loan?.fundingTxId || loan.repaymentTxId !== repaymentTxId || !completion) {
     throw new Error(`Vertical testnet flow did not remain closed; final state is ${mission?.state ?? "missing"}`);
   }
-  if (!listMissionEvents(orchestratorDatabase, created.id).some(event => event.type === "callback-duplicate")) {
+  if (!listMissionEvents(orchestratorDatabase, missionId).some(event => event.type === "callback-duplicate")) {
     throw new Error("Duplicate callback audit evidence is missing");
   }
 
   process.stdout.write(`${JSON.stringify({
-    missionId: created.id,
+    missionId,
     state: mission.state,
     recovery: "lost callback response replayed after restart without a second repayment",
     transactions: {
@@ -394,6 +474,7 @@ try {
     },
     databases: runDirectory,
   }, null, 2)}\n`);
+  }
 } finally {
   paidScan?.callbacks.stop();
   paidScan?.settlements.stop();
