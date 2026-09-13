@@ -127,6 +127,9 @@ importers:
       '@koven/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -203,7 +206,11 @@ importers:
         specifier: 9.6.0
         version: 9.6.0
 
-  packages/policy: {}
+  packages/policy:
+    dependencies:
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/schemas:
     dependencies:

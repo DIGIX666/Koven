@@ -16,6 +16,7 @@ import {
   type KovenDatabase,
   type PersistedMission,
 } from "@koven/persistence";
+import { rankProviders } from "@koven/policy";
 import type { HttpRequest } from "@koven/schemas";
 import { type FieldHasher, loadPoseidon } from "@koven/x402";
 import { buildMerkleTree } from "@koven/zk-policy";
@@ -78,7 +79,10 @@ export class MissionWorkflow {
     const targetSha256 = hashBytes(request.source);
     const createdAt = this.now();
     const spendingCapTinybar = BigInt(request.maxBudgetTinybar);
-    const ranked = rankProviders(this.options.providers, spendingCapTinybar);
+    const ranked = rankProviders(this.options.providers, {
+      capability: "solidity-scan",
+      maxPriceTinybar: spendingCapTinybar,
+    });
     const selected = ranked[0];
     if (selected === undefined) throw new Error("No provider is configured");
     const provider = selected.provider;
@@ -358,21 +362,4 @@ export class MissionWorkflow {
     if (state !== "recovery") return;
     await moveFailure(loan === undefined ? "closed" : "defaulted", "mission-failed");
   }
-}
-
-export function rankProviders(
-  providers: readonly Provider[],
-  maxBudgetTinybar: bigint,
-): RankedProvider[] {
-  const denominator = Number(maxBudgetTinybar === 0n ? 1n : maxBudgetTinybar);
-  return providers.map(provider => {
-    const price = 1 - Math.min(Number(provider.priceTinybar) / denominator, 1);
-    const reputation = provider.reputationScore;
-    const latency = 1 / (1 + provider.expectedLatencyMs / 1_000);
-    return {
-      provider,
-      score: price * 0.4 + reputation * 0.4 + latency * 0.2,
-      breakdown: { price, reputation, latency },
-    };
-  }).sort((left, right) => right.score - left.score || left.provider.id.localeCompare(right.provider.id));
 }

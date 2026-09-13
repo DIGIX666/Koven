@@ -33,6 +33,9 @@
       "path": "../../packages/persistence/tsconfig.build.json"
     },
     {
+      "path": "../../packages/policy/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/schemas/tsconfig.build.json"
     },
     {

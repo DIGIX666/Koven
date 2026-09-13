@@ -10,6 +10,7 @@
     "@koven/credit-protocol": "workspace:*",
     "@koven/domain": "workspace:*",
     "@koven/persistence": "workspace:*",
+    "@koven/policy": "workspace:*",
     "@koven/schemas": "workspace:*",
     "@koven/x402": "workspace:*",
     "@koven/zk-policy": "workspace:*",
