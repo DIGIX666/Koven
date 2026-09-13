@@ -135,7 +135,9 @@ reads:
 | Variable | Meaning |
 | --- | --- |
 | `RESTRICTED_SIGNER_HOST` | Interface the listener binds to; defaults to `127.0.0.1` |
-| `SIGNER_PROOF_MODE` | Payment gate mode; `deterministic` (default) is the M2 gate. The ZK mode is a later deployment setting, never a request field |
+| `SIGNER_PROOF_MODE` | Payment gate mode, never a request field: `deterministic` (default, M2) or `zk` (M3: `/authorize` and `/sign-credit-acceptance` require a verified policy proof, registration requires the selected provider's singleton root) |
+| `SIGNER_VERIFICATION_KEY_PATH` | zk mode: path to the signer's own copy of `verification_key.json` (from `pnpm zk:build`) |
+| `SIGNER_TRUSTED_VKEY_SHA256` | zk mode: reviewed SHA-256 pin of that file (`artifacts-manifest.json` → `vkeyHash`); startup refuses a file that hashes differently, and `GET /health` reports the pinned hash |
 | `SIGNER_CONSUMER_CREDENTIAL` | Credential presented by the consumer agent on `/authorize`, `/sign-credit-request` and `/sign-credit-acceptance` |
 | `SIGNER_ORCHESTRATOR_CREDENTIAL` | Credential presented by the orchestrator on `/repay` |
 | `SIGNER_REGISTRAR_CREDENTIAL` | Trusted operator/registrar credential for `/internal/missions/register` |

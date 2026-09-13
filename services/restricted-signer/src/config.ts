@@ -9,12 +9,16 @@ const CREDENTIAL = /^[A-Za-z0-9_-]{43,}$/;
 const CALLBACK_SECRET = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_HOST = "127.0.0.1";
 
-/** M2 runs the deterministic gate; the ZK mode is a later deployment configuration, never a request field. */
-export type ProofMode = "deterministic";
+import { loadPinnedVerificationKey } from "@koven/zk-policy";
+
+import type { ProofMode, TrustedVerificationKey } from "./proof.js";
 
 export interface SignerConfig {
   readonly network: "hedera:testnet";
+  /** Deployment milestone setting, never a request field: `deterministic` (M2) or `zk` (M3). */
   readonly proofMode: ProofMode;
+  /** Loaded and hash-pinned at startup in `zk` mode; startup fails on a mismatch. */
+  readonly verification?: TrustedVerificationKey;
   readonly accountId: string;
   readonly privateKey: PrivateKey;
   /** The configured key text, handed only to the Hedera client factory. */
@@ -110,9 +114,17 @@ export function loadSignerConfig(source: EnvironmentSource = process.env): Signe
   const host = validate("RESTRICTED_SIGNER_HOST", () => bindHost(source.RESTRICTED_SIGNER_HOST || DEFAULT_HOST), invalid);
   const proofMode = validate("SIGNER_PROOF_MODE", (): ProofMode => {
     const value = source.SIGNER_PROOF_MODE || "deterministic";
-    if (value !== "deterministic") throw new Error("Unsupported proof mode");
+    if (value !== "deterministic" && value !== "zk") throw new Error("Unsupported proof mode");
     return value;
   }, invalid);
+  let verification: TrustedVerificationKey | undefined;
+  if (proofMode === "zk") {
+    const keyPath = required(source, "SIGNER_VERIFICATION_KEY_PATH", invalid);
+    const pin = required(source, "SIGNER_TRUSTED_VKEY_SHA256", invalid);
+    if (keyPath && pin) {
+      verification = validate("SIGNER_TRUSTED_VKEY_SHA256", () => loadPinnedVerificationKey(keyPath, pin), invalid);
+    }
+  }
   const consumer = credential(source, "SIGNER_CONSUMER_CREDENTIAL", invalid);
   const orchestrator = credential(source, "SIGNER_ORCHESTRATOR_CREDENTIAL", invalid);
   const registrar = credential(source, "SIGNER_REGISTRAR_CREDENTIAL", invalid);
@@ -153,13 +165,17 @@ export function loadSignerConfig(source: EnvironmentSource = process.env): Signe
     invalid.push("SIGNER_CONSUMER_CREDENTIAL", "SIGNER_ORCHESTRATOR_CREDENTIAL", "SIGNER_REGISTRAR_CREDENTIAL", "SIGNER_LENDER_CREDENTIALS");
   }
 
-  if (invalid.length > 0 || !privateKey || !mirrorNodeUrl || !host || !proofMode || !lenders || !lenderPublicKeys || !providerCallbackSecrets) {
+  if (
+    invalid.length > 0 || !privateKey || !mirrorNodeUrl || !host || !proofMode || !lenders || !lenderPublicKeys
+    || !providerCallbackSecrets || (proofMode === "zk" && !verification)
+  ) {
     throw new EnvironmentValidationError([...new Set(invalid)].sort());
   }
 
   return Object.freeze({
     network: base.x402Network,
     proofMode,
+    ...(verification ? { verification } : {}),
     accountId: base.accountId,
     privateKey,
     privateKeyText: base.privateKey,

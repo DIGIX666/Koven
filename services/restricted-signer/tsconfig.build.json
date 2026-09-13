@@ -37,6 +37,9 @@
     },
     {
       "path": "../../packages/x402/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/zk-policy/tsconfig.build.json"
     }
   ]
 }

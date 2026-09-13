@@ -8,6 +8,7 @@ import { loadSignerConfig } from "./config.js";
 import { CreditService } from "./credit.js";
 import { PaymentGate } from "./gate.js";
 import { MirrorTransferConfirmer } from "./ledger.js";
+import { ProofPolicy } from "./proof.js";
 import { RepaymentService, SdkRepaymentLedger } from "./repay.js";
 import { createSignerApp } from "./server.js";
 import { SignerStore } from "./store.js";
@@ -33,6 +34,8 @@ export async function createSignerRuntime(source: EnvironmentSource = process.en
   });
   try {
     const confirmer = new MirrorTransferConfirmer({ mirrorNodeUrl: config.mirrorNodeUrl });
+    const poseidon = await loadPoseidon();
+    const proofPolicy = config.verification ? new ProofPolicy({ poseidon, trusted: config.verification }) : undefined;
     const app = createSignerApp({
       store,
       gate: new PaymentGate({
@@ -41,7 +44,8 @@ export async function createSignerRuntime(source: EnvironmentSource = process.en
         privateKey: config.privateKey,
         network: config.network,
         proofMode: config.proofMode,
-        poseidon: await loadPoseidon(),
+        ...(proofPolicy ? { proofPolicy } : {}),
+        poseidon,
       }),
       credit: new CreditService({
         store,
@@ -49,6 +53,8 @@ export async function createSignerRuntime(source: EnvironmentSource = process.en
         privateKey: config.privateKey,
         lenderPublicKeys: config.lenderPublicKeys,
         confirmer,
+        proofMode: config.proofMode,
+        ...(proofPolicy ? { proofPolicy } : {}),
       }),
       completion: new CompletionService({
         store,
@@ -62,6 +68,7 @@ export async function createSignerRuntime(source: EnvironmentSource = process.en
         ledger: new SdkRepaymentLedger(client, config.accountId, config.privateKey),
         confirmer,
       }),
+      ...(proofPolicy ? { proofPolicy } : {}),
       credentials: config.credentials,
     });
     return {

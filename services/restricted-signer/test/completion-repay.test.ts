@@ -191,7 +191,7 @@ describe("/repay", () => {
     const terms = { id: "offer-1", requestId: "credit-1", lenderAccountId, principalTinybar: "3000000", feeTinybar: "30000", termSeconds: 3600, expiresAt: "2026-09-12T12:05:00.000Z" };
     const unsignedOffer = { ...terms, termsHash: termsHashFor(terms) };
     const offer = { ...unsignedOffer, signature: signDomain(lenderKey, CREDIT_SIGNATURE_DOMAINS.offer, unsignedOffer) };
-    const signed = credit.signCreditAcceptance({ offer });
+    const signed = await credit.signCreditAcceptance({ offer });
     const registration = {
       loanId: "loan-1", request: { ...request, signature }, offer, acceptance: signed.acceptance,
       signatures: { acceptance: signed.signature }, fundingTxId: `${lenderAccountId}@1789128000.000000001`,

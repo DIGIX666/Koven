@@ -5,6 +5,7 @@ export * from "./credit.js";
 export * from "./errors.js";
 export * from "./gate.js";
 export * from "./ledger.js";
+export * from "./proof.js";
 export * from "./repay.js";
 export * from "./runtime.js";
 export * from "./server.js";

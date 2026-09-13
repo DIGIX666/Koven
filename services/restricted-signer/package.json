@@ -9,7 +9,8 @@
     "dev": "tsx --env-file=../../.env src/main.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/restricted-signer"
+    "test": "vitest run --root ../.. --project @koven/restricted-signer",
+    "test:artifacts": "vitest run --config vitest.artifacts.config.ts"
   },
   "dependencies": {
     "@koven/audit": "workspace:*",
@@ -19,6 +20,7 @@
     "@koven/persistence": "workspace:*",
     "@koven/schemas": "workspace:*",
     "@koven/x402": "workspace:*",
+    "@koven/zk-policy": "workspace:*",
     "@x402/hedera": "2.24.0",
     "express": "5.1.0",
     "zod": "3.25.76"

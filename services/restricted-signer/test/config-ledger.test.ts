@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { PrivateKey } from "@koven/hedera";
 import { describe, expect, it, vi } from "vitest";
 
@@ -51,7 +56,17 @@ describe("loadSignerConfig", () => {
     expect(loadSignerConfig({ ...valid, RESTRICTED_SIGNER_HOST: "0.0.0.0" }).host).toBe("0.0.0.0");
     expect(() => loadSignerConfig({ ...valid, SIGNER_LENDER_PUBLIC_KEYS: `0.0.4002:${lender.publicKey.toStringRaw()}` })).toThrowError(/SIGNER_LENDER_PUBLIC_KEYS/);
     expect(loadSignerConfig(valid).proofMode).toBe("deterministic");
-    expect(() => loadSignerConfig({ ...valid, SIGNER_PROOF_MODE: "zk" })).toThrowError(/SIGNER_PROOF_MODE/);
+    expect(() => loadSignerConfig({ ...valid, SIGNER_PROOF_MODE: "plonk" })).toThrowError(/SIGNER_PROOF_MODE/);
+    // zk mode refuses to start without a pinned key file and hash, or with a hash that does not match the file.
+    expect(() => loadSignerConfig({ ...valid, SIGNER_PROOF_MODE: "zk" })).toThrowError(/SIGNER_TRUSTED_VKEY_SHA256|SIGNER_VERIFICATION_KEY_PATH/);
+    const keyPath = join(tmpdir(), `koven-vkey-${process.pid}.json`);
+    writeFileSync(keyPath, '{"protocol":"groth16","curve":"bn128"}');
+    const pin = createHash("sha256").update(readFileSync(keyPath)).digest("hex");
+    expect(() => loadSignerConfig({ ...valid, SIGNER_PROOF_MODE: "zk", SIGNER_VERIFICATION_KEY_PATH: keyPath, SIGNER_TRUSTED_VKEY_SHA256: "0".repeat(64) })).toThrowError(/SIGNER_TRUSTED_VKEY_SHA256/);
+    const zk = loadSignerConfig({ ...valid, SIGNER_PROOF_MODE: "zk", SIGNER_VERIFICATION_KEY_PATH: keyPath, SIGNER_TRUSTED_VKEY_SHA256: pin });
+    expect(zk.proofMode).toBe("zk");
+    expect(zk.verification).toEqual({ verificationKey: { protocol: "groth16", curve: "bn128" }, vkeyHash: pin });
+    rmSync(keyPath);
   });
 });
 
