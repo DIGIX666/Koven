@@ -7,4 +7,3 @@ export async function GET() {
     return dashboardErrorResponse(error);
   }
 }
-

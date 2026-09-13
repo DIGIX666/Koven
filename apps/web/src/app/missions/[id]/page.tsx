@@ -20,7 +20,12 @@ export default async function MissionPage({ params }: { params: Promise<{ id: st
         eyebrow="Live mission evidence"
         title="Execution trace"
         description="The view refreshes from the orchestrator every two seconds and preserves the last valid response during an outage."
-        action={<Link className="secondary-action" href="/missions">← All missions</Link>}
+        action={(
+          <span className="card-row">
+            <Link className="secondary-action" href={`/payments?mission=${encodeURIComponent(id)}`}>Payment rail →</Link>
+            <Link className="secondary-action" href="/missions">← All missions</Link>
+          </span>
+        )}
       />
       <MissionLivePanel missionId={id} {...(initialData ? { initialData } : {})} />
     </div>

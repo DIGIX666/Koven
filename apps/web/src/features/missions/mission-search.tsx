@@ -3,14 +3,18 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-export function MissionSearch() {
+/** Opens a mission on its detail route, or on another route that takes `?mission=` (the payment rail). */
+export function MissionSearch({ destination = "/missions" }: { destination?: "/missions" | "/payments" }) {
   const router = useRouter();
   const [missionId, setMissionId] = useState("");
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = missionId.trim();
-    if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) router.push(`/missions/${encodeURIComponent(value)}`);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) return;
+    router.push(destination === "/missions"
+      ? `/missions/${encodeURIComponent(value)}`
+      : `${destination}?mission=${encodeURIComponent(value)}`);
   };
 
   return (

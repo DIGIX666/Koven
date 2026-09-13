@@ -32,6 +32,8 @@ jobs:
           circom --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # The dashboard's Next.js bundle is not part of `tsc -b`; compile it so route and bundling errors surface in CI.
+      - run: pnpm --filter @koven/web build
       - run: pnpm zk:build
       - run: pnpm typecheck
       - run: pnpm lint

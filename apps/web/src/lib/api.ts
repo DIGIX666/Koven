@@ -1,4 +1,5 @@
 import {
+  HealthResponseSchema,
   MissionDetailResponseSchema,
   ProviderRankResponseSchema,
   ProvidersResponseSchema,
@@ -14,6 +15,7 @@ interface Schema<T> {
 export interface DashboardApiOptions {
   orchestratorUrl?: string;
   directoryUrl?: string;
+  signerUrl?: string;
   fetch?: typeof fetch;
 }
 
@@ -35,6 +37,7 @@ export class DashboardApiError extends Error {
 
 const DEFAULT_ORCHESTRATOR_URL = "http://127.0.0.1:3001";
 const DEFAULT_DIRECTORY_URL = "http://127.0.0.1:3002";
+const DEFAULT_SIGNER_URL = "http://127.0.0.1:3004";
 
 const browserProxyUrl = (): string | undefined => typeof window === "undefined"
   ? undefined
@@ -97,6 +100,7 @@ async function request<T>(
 export class DashboardApi {
   private readonly orchestratorUrl: string;
   private readonly directoryUrl: string;
+  private readonly signerUrl: string;
   private readonly fetcher: typeof fetch;
 
   constructor(options: DashboardApiOptions = {}) {
@@ -108,6 +112,12 @@ export class DashboardApi {
     this.directoryUrl = serviceUrl(
       options.directoryUrl ?? proxyUrl ?? process.env.NEXT_PUBLIC_DIRECTORY_API_URL,
       DEFAULT_DIRECTORY_URL,
+    );
+    // The browser reaches the signer only through the same-origin proxy, and
+    // only its unauthenticated health route (pinned circuit and key hash).
+    this.signerUrl = serviceUrl(
+      options.signerUrl ?? (proxyUrl === undefined ? process.env.NEXT_PUBLIC_SIGNER_API_URL : `${proxyUrl}/signer`),
+      DEFAULT_SIGNER_URL,
     );
     this.fetcher = options.fetch ?? fetch;
   }
@@ -123,6 +133,11 @@ export class DashboardApi {
       MissionDetailResponseSchema,
       signal,
     );
+  }
+
+  /** The restricted signer's public health: `circuitId` and the `vkeyHash` it pinned (null in deterministic mode). */
+  signerHealth(signal?: AbortSignal): Promise<HttpResponse<"health">> {
+    return request(this.fetcher, `${this.signerUrl}/health`, HealthResponseSchema, signal);
   }
 
   providers(signal?: AbortSignal): Promise<HttpResponse<"providers">> {

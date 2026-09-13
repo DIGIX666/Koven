@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { providerRankingFixture } from "../test-fixtures";
 import { AuditWorkspace } from "./audit/audit-workspace";
 import { CreditWorkspace } from "./credit/credit-workspace";
-import { PaymentWorkspace } from "./payments/payment-workspace";
+import { PaymentEvidencePanel, PaymentWorkspace } from "./payments/payment-workspace";
 import { ProviderRanking } from "./providers/provider-ranking";
 
 describe("future milestone integration states", () => {
@@ -47,20 +47,51 @@ describe("future milestone integration states", () => {
     expect(html).toContain(providerRankingFixture.formula);
   });
 
-  it("renders payment evidence without raw signing material", () => {
-    const html = renderToStaticMarkup(createElement(PaymentWorkspace, { evidence: {
-      transactionId: "0.0.123@1789000000.123456789",
-      amountTinybar: "1000000",
-      recipient: "0.0.456",
+  it("renders an explicit payment empty state until a mission is selected", () => {
+    const html = renderToStaticMarkup(createElement(PaymentWorkspace));
+    expect(html).toContain("Select a mission with payment evidence");
+  });
+
+  it("renders settled payment evidence with the HashScan link and the pinned key, without raw signing material", () => {
+    const html = renderToStaticMarkup(createElement(PaymentEvidencePanel, { evidence: {
+      missionId: "mission-demo-1",
+      status: "settled",
+      proof: "verified",
       circuitId: "koven-policy-v1",
       vkeyHash: "a".repeat(64),
-      verified: true,
+      capTinybar: "2500000000",
+      approvedRecipientsRoot: "123456789",
+      targetSha256: "b".repeat(64),
+      transactionId: "0.0.123@1789000000.123456789",
+      authorizedAt: "2026-09-13T10:01:00.000Z",
+      settledAt: "2026-09-13T10:02:00.000Z",
+      proofGeneratedAt: "2026-09-13T10:00:30.000Z",
     } }));
+    expect(html).toContain("Settled");
     expect(html).toContain("Verified");
-    expect(html).toContain("HashScan");
+    expect(html).toContain("https://hashscan.io/testnet/transaction/0.0.123%401789000000.123456789");
+    expect(html).toContain(`title="${"a".repeat(64)}"`);
+    expect(html).toContain("25 ℏ");
     expect(html).toContain("Hidden by design");
     expect(html).not.toContain("privateKey");
     expect(html).not.toContain("signedBytes");
+  });
+
+  it("distinguishes rejected and deterministic payments", () => {
+    const base = {
+      missionId: "mission-demo-1", circuitId: "koven-policy-v1", capTinybar: "1", approvedRecipientsRoot: "1", targetSha256: "b".repeat(64),
+    };
+    const rejected = renderToStaticMarkup(createElement(PaymentEvidencePanel, { evidence: {
+      ...base, status: "rejected", proof: "rejected", vkeyHash: "a".repeat(64), rejectedAt: "2026-09-13T10:00:00.000Z",
+    } }));
+    expect(rejected).toContain("Rejected by policy");
+    expect(rejected).toContain("Payment refused");
+    expect(rejected).not.toContain("hashscan.io");
+    const deterministic = renderToStaticMarkup(createElement(PaymentEvidencePanel, { evidence: {
+      ...base, status: "pending", proof: "deterministic", vkeyHash: null,
+    } }));
+    expect(deterministic).toContain("Deterministic gate");
+    expect(deterministic).toContain("No key pinned");
   });
 
   it("renders HCS sequence and public evidence without a local payload", () => {

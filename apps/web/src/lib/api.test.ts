@@ -32,6 +32,16 @@ describe("DashboardApi", () => {
     );
   });
 
+  it("validates the signer's public health against the shared contract", async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ status: "ok", circuitId: "koven-policy-v1", vkeyHash: "d".repeat(64) })) as unknown as typeof fetch;
+    const api = new DashboardApi({ signerUrl: "https://signer.example", fetch: fetcher });
+
+    await expect(api.signerHealth()).resolves.toEqual({ status: "ok", circuitId: "koven-policy-v1", vkeyHash: "d".repeat(64) });
+    expect(fetcher).toHaveBeenCalledWith("https://signer.example/health", expect.objectContaining({ method: "GET" }));
+    const tampered = new DashboardApi({ signerUrl: "https://signer.example", fetch: vi.fn(async () => jsonResponse({ status: "ok", circuitId: "koven-policy-v1", vkeyHash: "not-a-hash" })) as unknown as typeof fetch });
+    await expect(tampered.signerHealth()).rejects.toMatchObject({ kind: "contract" });
+  });
+
   it("rejects credentials and non-http dashboard service URLs", () => {
     expect(() => new DashboardApi({ orchestratorUrl: "https://user:secret@example.com" }))
       .toThrowError(DashboardApiError);
