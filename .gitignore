@@ -16,7 +16,7 @@ packages/zk-policy/artifacts/*
 !packages/zk-policy/artifacts/.gitkeep
 
 # Local persistence
+.koven-testnet/
 *.db
 *.db-shm
 *.db-wal
-

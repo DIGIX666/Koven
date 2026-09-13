@@ -1,10 +1,13 @@
 import type { Server } from "node:http";
 
 import type { Application } from "express";
+import type { ConsumerMissionObserver } from "@koven/consumer-agent";
+import { loanIdForOffer } from "@koven/credit-protocol";
 import { ErrorCode } from "@koven/domain";
 import {
   getIdempotencyResult,
   getLoan,
+  getMission,
   getMissionCompletion,
   getMissionPolicy,
   listMissionEvents,
@@ -12,7 +15,7 @@ import {
   type KovenDatabase,
 } from "@koven/persistence";
 import { CallbackResponseSchema, MAX_HTTP_BODY_BYTES, MissionDetailResponseSchema, MissionSchema } from "@koven/schemas";
-import { FakeHederaAdapter, FakeSigner, FakeX402Client, NoopAuditSink } from "@koven/testing";
+import { NoopAuditSink } from "@koven/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -31,6 +34,9 @@ const timestamp = "2026-09-11T12:00:00.000Z";
 const epochSeconds = String(Math.floor(Date.parse(timestamp) / 1_000));
 const settlementTxId = "0.0.10@1789128000.000000001";
 const repaymentTxId = "0.0.10@1789128000.000000002";
+const fundingTxId = "0.0.30@1789128000.000000003";
+const offerId = "offer-1";
+const loanId = loanIdForOffer(offerId);
 const source = "pragma solidity ^0.8.0; contract Example {}";
 const targetSha256 = hashBytes(source);
 const callbackSecret = Buffer.alloc(32, 9);
@@ -42,11 +48,12 @@ interface RuntimeOptions {
   readonly borrowerBalance?: bigint;
   readonly budgetTinybar?: bigint;
   readonly providerPriceTinybar?: bigint;
-  readonly failPaymentSigner?: boolean;
   readonly noProviders?: boolean;
   readonly repaymentFailures?: number;
   readonly settlementFailures?: number;
   readonly settlementMismatch?: boolean;
+  readonly paymentFailureAfterFunding?: boolean;
+  readonly continueAfterFunding?: Promise<void>;
 }
 
 const runtime = (options: RuntimeOptions = {}) => {
@@ -58,14 +65,6 @@ const runtime = (options: RuntimeOptions = {}) => {
     now: () => timestamp,
     eventId: () => `event-${++eventSequence}`,
   });
-  const hedera = new FakeHederaAdapter({
-    balances: {
-      "0.0.10": options.borrowerBalance ?? 1n,
-      "0.0.30": 10_000n,
-    },
-  });
-  const signer = new FakeSigner("0.0.10");
-  if (options.failPaymentSigner) signer.failNext(new Error("injected signer failure"));
   const providerPriceTinybar = options.providerPriceTinybar ?? 100n;
   const provider = {
     id: "provider-a",
@@ -75,15 +74,6 @@ const runtime = (options: RuntimeOptions = {}) => {
     priceTinybar: providerPriceTinybar,
     reputationScore: 0.9,
     expectedLatencyMs: 50,
-  };
-  const requirements = {
-    scheme: "exact" as const,
-    network: "hedera:testnet" as const,
-    asset: "0.0.0" as const,
-    amount: providerPriceTinybar.toString(10),
-    payTo: provider.accountId,
-    maxTimeoutSeconds: 180,
-    extra: { feePayer: "0.0.40" },
   };
   const unsignedReport = {
     schemaVersion: 1 as const,
@@ -105,19 +95,82 @@ const runtime = (options: RuntimeOptions = {}) => {
     amountTinybar: providerPriceTinybar,
     settledAt: timestamp,
   };
-  const x402Client = new FakeX402Client({
-    challenge: { status: 402, requirements },
-    settlement: { status: 200, receipt, report },
-  });
+  const consumer = {
+    execute: vi.fn(async (_input: unknown, observer?: ConsumerMissionObserver) => {
+      const scan = { status: 200 as const, receipt, report };
+      const pay = async () => {
+        await observer?.onProgress({ type: "payment-preparation" });
+        await observer?.onProgress({
+          type: "payment-authorized",
+          transactionId: settlementTxId,
+          nonce: "1",
+          amountTinybar: providerPriceTinybar,
+        });
+        await observer?.onProgress({ type: "service-paid", scan });
+        return scan;
+      };
+      const balance = options.borrowerBalance ?? 1n;
+      if (balance >= providerPriceTinybar) return { scan: await pay() };
+      const principalTinybar = providerPriceTinybar - balance;
+      const request = {
+        id: "credit-1",
+        missionId: "mission-1",
+        borrowerAccountId: "0.0.10",
+        principalTinybar,
+        requestedTermSeconds: 3_600,
+        purposeHash: "c".repeat(64),
+        createdAt: timestamp,
+        signature: "d".repeat(128),
+      };
+      await observer?.onProgress({ type: "credit-requested", request });
+      const offer = {
+        id: offerId,
+        requestId: request.id,
+        lenderAccountId: "0.0.30",
+        principalTinybar,
+        feeTinybar: 1n,
+        termSeconds: 3_600,
+        expiresAt: "2026-09-11T13:00:00.000Z",
+        termsHash: "e".repeat(64),
+        signature: "f".repeat(128),
+      };
+      const acceptance = {
+        acceptance: {
+          requestId: request.id,
+          missionId: request.missionId,
+          borrowerAccountId: request.borrowerAccountId,
+          lenderAccountId: offer.lenderAccountId,
+          offerId: offer.id,
+          termsHash: offer.termsHash,
+          expiresAt: offer.expiresAt,
+        },
+        signature: "a".repeat(128),
+      };
+      await observer?.onProgress({ type: "funded", request, offer, acceptance, fundingTxId });
+      await options.continueAfterFunding;
+      if (options.paymentFailureAfterFunding) throw new Error("Provider payment failed");
+      return {
+        scan: await pay(),
+        credit: {
+          request,
+          offer,
+          acceptance,
+          fundingTxId,
+        },
+      };
+    }),
+  };
+  const policyRegistrars = [
+    { register: vi.fn(async () => undefined) },
+    { register: vi.fn(async () => undefined) },
+  ];
   const workflow = new MissionWorkflow({
     database,
     stateMachine,
-    hedera,
-    signer,
-    x402Client,
+    consumer,
+    policyRegistrars,
     providers: options.noProviders ? [] : [provider],
     borrowerAccountId: "0.0.10",
-    lenderAccountId: "0.0.30",
     approvedRecipientsRoot: "1",
     now: () => timestamp,
     missionId: () => "mission-1",
@@ -165,9 +218,8 @@ const runtime = (options: RuntimeOptions = {}) => {
     app,
     database,
     sink,
-    hedera,
-    signer,
-    x402Client,
+    consumer,
+    policyRegistrars,
     report,
     provider,
     settlementConfirmer,
@@ -236,6 +288,14 @@ async function postCallback(
   });
 }
 
+async function waitForState(database: KovenDatabase, state: string): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (getMission(database, "mission-1")?.state !== state && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  expect(getMission(database, "mission-1")?.state).toBe(state);
+}
+
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
     server.close(error => error === undefined ? resolve() : reject(error));
@@ -250,8 +310,9 @@ describe("orchestrator mission and trusted completion API", () => {
 
     const created = MissionSchema.parse(await (await postMission(baseUrl, test.budgetTinybar)).json());
     expect(created.state).toBe("running");
-    expect(test.hedera.transfers).toHaveLength(1);
-    expect(getLoan(test.database, "loan-mission-1")?.state).toBe("funded");
+    expect(test.consumer.execute).toHaveBeenCalledTimes(1);
+    expect(test.policyRegistrars.every(registrar => registrar.register.mock.calls.length === 1)).toBe(true);
+    expect(getLoan(test.database, loanId)?.state).toBe("funded");
 
     const callback = await postCallback(baseUrl, callbackBody(test.report));
     expect(callback.status, await callback.clone().text()).toBe(202);
@@ -259,7 +320,7 @@ describe("orchestrator mission and trusted completion API", () => {
 
     const detail = MissionDetailResponseSchema.parse(await (await fetch(`${baseUrl}/missions/mission-1`)).json());
     expect(detail.state).toBe("closed");
-    expect(getLoan(test.database, "loan-mission-1")).toMatchObject({
+    expect(getLoan(test.database, loanId)).toMatchObject({
       state: "repaid",
       repaymentTxId,
     });
@@ -281,9 +342,22 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(test.signerCompletion.complete).toHaveBeenCalledTimes(1);
     expect(test.repaymentClient.repay).toHaveBeenCalledWith({
       missionId: "mission-1",
-      loanId: "loan-mission-1",
-      idempotencyKey: "repayment:loan-mission-1",
+      loanId,
+      idempotencyKey: `repayment:${loanId}`,
     });
+  });
+
+  it("closes a sufficiently funded mission without creating or repaying a loan", async () => {
+    const test = runtime({ borrowerBalance: 100n });
+    const baseUrl = await listen(test.app);
+
+    expect(MissionSchema.parse(await (await postMission(baseUrl)).json()).state).toBe("running");
+    expect(getLoan(test.database, loanId)).toBeUndefined();
+    expect((await postCallback(baseUrl, callbackBody(test.report))).status).toBe(202);
+    expect(MissionDetailResponseSchema.parse(await (
+      await fetch(`${baseUrl}/missions/mission-1`)
+    ).json()).state).toBe("closed");
+    expect(test.repaymentClient.repay).not.toHaveBeenCalled();
   });
 
   it("authenticates identical replays and never requests a second repayment", async () => {
@@ -319,7 +393,7 @@ describe("orchestrator mission and trusted completion API", () => {
     ]);
     expect(responses.map(response => response.status)).toEqual([202, 202]);
     expect(test.repaymentClient.repay).toHaveBeenCalledTimes(1);
-    expect(getLoan(test.database, "loan-mission-1")?.state).toBe("repaid");
+    expect(getLoan(test.database, loanId)?.state).toBe("repaid");
   });
 
   it("rejects invalid authentication and report contracts before ledger confirmation", async () => {
@@ -369,6 +443,26 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(test.repaymentClient.repay).toHaveBeenCalledTimes(1);
   });
 
+  it("returns a retryable response when a provider callback races mission persistence", async () => {
+    let resume!: () => void;
+    const continueAfterFunding = new Promise<void>(resolve => { resume = resolve; });
+    const test = runtime({ continueAfterFunding });
+    const baseUrl = await listen(test.app);
+    const missionResponse = postMission(baseUrl);
+    await waitForState(test.database, "funded");
+
+    const early = await postCallback(baseUrl, callbackBody(test.report));
+    expect(early.status).toBe(503);
+    expect(await early.json()).toMatchObject({ code: ErrorCode.SETTLEMENT_UNCONFIRMED });
+    expect(getIdempotencyResult(test.database, `mission-complete:mission-1:${test.report.reportSha256}`))
+      .toBeUndefined();
+
+    resume();
+    expect(MissionSchema.parse(await (await missionResponse).json()).state).toBe("running");
+    expect((await postCallback(baseUrl, callbackBody(test.report))).status).toBe(202);
+    expect(getLoan(test.database, loanId)?.state).toBe("repaid");
+  });
+
   it("rejects independently observed settlement mismatches as callback binding failures", async () => {
     const test = runtime({ settlementMismatch: true });
     const baseUrl = await listen(test.app);
@@ -400,7 +494,7 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(recovered.status).toBe(202);
     expect(await recovered.json()).toMatchObject({ status: "duplicate" });
     expect(test.repaymentClient.repay).toHaveBeenCalledTimes(2);
-    expect(getLoan(test.database, "loan-mission-1")?.repaymentTxId).toBe(repaymentTxId);
+    expect(getLoan(test.database, loanId)?.repaymentTxId).toBe(repaymentTxId);
   });
 
   it("returns a conflict for authenticated reuse of a stored callback key with different content", async () => {
@@ -432,7 +526,26 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(rejected.state).toBe("closed");
     expect(listMissionEvents(test.database, "mission-1").map(event => event.type)).toContain("payment-rejected");
     expect(getMissionPolicy(test.database, "mission-1")).toBeUndefined();
-    expect(test.signer.requirements).toHaveLength(0);
-    expect(test.x402Client.requests).toHaveLength(0);
+    expect(test.consumer.execute).not.toHaveBeenCalled();
+    expect(test.policyRegistrars.every(registrar => registrar.register.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("persists funded credit before payment and defaults visibly when payment fails", async () => {
+    const test = runtime({ paymentFailureAfterFunding: true });
+    const baseUrl = await listen(test.app);
+
+    const response = await postMission(baseUrl);
+    expect(response.status).toBe(201);
+    expect(MissionSchema.parse(await response.json()).state).toBe("defaulted");
+    expect(getLoan(test.database, loanId)).toMatchObject({
+      state: "funded",
+      fundingTxId,
+    });
+    expect(listMissionEvents(test.database, "mission-1").map(event => event.type)).toEqual(expect.arrayContaining([
+      "credit-requested",
+      "offer-accepted",
+      "mission-failed",
+    ]));
+    expect(test.repaymentClient.repay).not.toHaveBeenCalled();
   });
 });

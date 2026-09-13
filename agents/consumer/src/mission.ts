@@ -10,7 +10,7 @@ import {
   type ConsumerLender,
   type CreditEvidence,
 } from "./credit.js";
-import type { ConsumerPayment } from "./payment.js";
+import type { ConsumerPayment, ConsumerPaymentProgress } from "./payment.js";
 
 const hashSource = (source: string): string => createHash("sha256").update(source, "utf8").digest("hex");
 
@@ -36,6 +36,25 @@ export interface ConsumerMissionResult {
     readonly acceptance: SignedCreditAcceptance;
     readonly fundingTxId: string;
   };
+}
+
+export type ConsumerMissionProgress =
+  | { readonly type: "payment-preparation" }
+  | ConsumerPaymentProgress
+  | {
+    readonly type: "credit-requested";
+    readonly request: CreditRequest;
+  }
+  | {
+    readonly type: "funded";
+    readonly request: CreditRequest;
+    readonly offer: CreditOffer;
+    readonly acceptance: SignedCreditAcceptance;
+    readonly fundingTxId: string;
+  };
+
+export interface ConsumerMissionObserver {
+  onProgress(event: ConsumerMissionProgress): Promise<void>;
 }
 
 export interface ConsumerMissionExecutorOptions {
@@ -77,7 +96,10 @@ export class ConsumerMissionExecutor {
     }
   }
 
-  async execute(input: ConsumerMissionInput): Promise<ConsumerMissionResult> {
+  async execute(
+    input: ConsumerMissionInput,
+    observer?: ConsumerMissionObserver,
+  ): Promise<ConsumerMissionResult> {
     TinybarString.parse(input.maxBudgetTinybar.toString(10));
     ProviderSchema.parse({
       ...input.provider,
@@ -109,15 +131,18 @@ export class ConsumerMissionExecutor {
         createdAt: this.now(),
       };
       const request = await this.options.signer.signCreditRequest(unsigned);
+      await observer?.onProgress({ type: "credit-requested", request });
       const offer = await this.options.lender.quote(request);
       if (offer === null) throw new Error("Lender declined the credit request");
       const evidence = input.creditEvidence ?? {};
       const acceptance = await this.options.signer.signCreditAcceptance(offer, evidence);
       const { fundingTxId } = await this.awaitFunding(acceptance, evidence);
       credit = { request, offer, acceptance, fundingTxId };
+      await observer?.onProgress({ type: "funded", ...credit });
     }
 
-    const scan = await this.options.payment.pay(scanRequest, input.provider);
+    await observer?.onProgress({ type: "payment-preparation" });
+    const scan = await this.options.payment.pay(scanRequest, input.provider, observer);
     return credit === undefined ? { scan } : { scan, credit };
   }
 

@@ -12,7 +12,27 @@ import {
 } from "@koven/x402";
 
 export interface ConsumerPayment {
-  pay(request: ScanRequest, provider: Provider): Promise<PaidResourceResponse>;
+  pay(
+    request: ScanRequest,
+    provider: Provider,
+    observer?: ConsumerPaymentObserver,
+  ): Promise<PaidResourceResponse>;
+}
+
+export type ConsumerPaymentProgress =
+  | {
+    readonly type: "payment-authorized";
+    readonly transactionId: string;
+    readonly nonce: string;
+    readonly amountTinybar: bigint;
+  }
+  | {
+    readonly type: "service-paid";
+    readonly scan: PaidResourceResponse;
+  };
+
+export interface ConsumerPaymentObserver {
+  onProgress(event: ConsumerPaymentProgress): Promise<void>;
 }
 
 export interface ConsumerPaymentServiceOptions {
@@ -34,7 +54,11 @@ export class ConsumerPaymentService implements ConsumerPayment {
     this.nonce = options.nonce ?? randomNonce;
   }
 
-  async pay(input: ScanRequest, provider: Provider): Promise<PaidResourceResponse> {
+  async pay(
+    input: ScanRequest,
+    provider: Provider,
+    observer?: ConsumerPaymentObserver,
+  ): Promise<PaidResourceResponse> {
     const request = ScanRequestSchema.parse(input);
     ProviderSchema.parse({ ...provider, priceTinybar: provider.priceTinybar.toString(10) });
     const scanUrl = `${provider.endpoint}/scan`;
@@ -66,6 +90,12 @@ export class ConsumerPaymentService implements ConsumerPayment {
     if (authorization === undefined) {
       throw new ChallengeRejectedError("restricted signer returned no bound authorization");
     }
+    await observer?.onProgress({
+      type: "payment-authorized",
+      transactionId: authorization.transactionId,
+      nonce: authorization.nonce,
+      amountTinybar: BigInt(authorization.amountTinybar),
+    });
     const paid = await client.retryWithPayment({
       ...request,
       paymentAuthorization: {
@@ -79,6 +109,7 @@ export class ConsumerPaymentService implements ConsumerPayment {
       || paid.receipt.recipientAccountId !== provider.accountId
       || paid.receipt.amountTinybar !== provider.priceTinybar
     ) throw new ChallengeRejectedError("paid response does not match the selected provider");
+    await observer?.onProgress({ type: "service-paid", scan: paid });
     return paid;
   }
 }

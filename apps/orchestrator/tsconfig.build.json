@@ -21,6 +21,12 @@
       "path": "../../packages/audit/tsconfig.build.json"
     },
     {
+      "path": "../../agents/consumer/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/credit-protocol/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/domain/tsconfig.build.json"
     },
     {

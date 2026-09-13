@@ -201,6 +201,7 @@ describe("consumer credit HTTP adapters", () => {
 
 describe("ConsumerPaymentService", () => {
   it("binds the real remote-signer flow to the selected provider without a proof bundle", async () => {
+    const order: string[] = [];
     const transaction = Buffer.from([1, 2, 3, 4]).toString("base64");
     const transactionSha256 = createHash("sha256").update(Buffer.from(transaction, "base64")).digest("hex");
     const requirements = {
@@ -232,7 +233,10 @@ describe("ConsumerPaymentService", () => {
     }));
     const client: X402Client = {
       request: vi.fn(async () => ({ status: 402 as const, requirements })),
-      retryWithPayment: vi.fn(async () => paidResult),
+      retryWithPayment: vi.fn(async () => {
+        order.push("retry-with-payment");
+        return paidResult;
+      }),
     };
     const payment = new ConsumerPaymentService({
       borrowerAccountId,
@@ -250,12 +254,20 @@ describe("ConsumerPaymentService", () => {
       targetSha256,
     };
 
-    await expect(payment.pay(scanRequest, provider)).resolves.toEqual(paidResult);
+    const progress = vi.fn(async event => { order.push(event.type); });
+    await expect(payment.pay(scanRequest, provider, { onProgress: progress })).resolves.toEqual(paidResult);
     expect(authorize).toHaveBeenCalledWith({ missionId: "mission-1", requirements, nonce: "7" });
     expect(client.retryWithPayment).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: "mission-1", paymentAuthorization: expect.any(Object) }),
       transaction,
     );
+    expect(order).toEqual(["payment-authorized", "retry-with-payment", "service-paid"]);
+    expect(progress).toHaveBeenNthCalledWith(1, {
+      type: "payment-authorized",
+      transactionId,
+      nonce: "7",
+      amountTinybar: provider.priceTinybar,
+    });
   });
 
   it("rejects a challenge for another provider before asking the signer", async () => {
@@ -337,6 +349,9 @@ describe("ConsumerMissionExecutor", () => {
       fundingRetryDelayMs: 1,
       wait: vi.fn(async () => undefined),
     });
+    const progress = vi.fn(async event => {
+      order.push(event.type);
+    });
 
     const result = await executor.execute({
       missionId: "mission-1",
@@ -344,19 +359,23 @@ describe("ConsumerMissionExecutor", () => {
       source,
       maxBudgetTinybar: 1_000n,
       provider,
-    });
+    }, { onProgress: progress });
 
     expect(result.credit?.request.principalTinybar).toBe(99n);
     expect(result.credit?.fundingTxId).toBe(fundingTxId);
     expect(order).toEqual([
       "sign-request",
+      "credit-requested",
       "quote",
       "sign-acceptance",
       "accept",
       "accept",
       "accept",
+      "funded",
+      "payment-preparation",
       "pay",
     ]);
+    expect(progress).toHaveBeenCalledTimes(3);
   });
 
   it("pays without contacting credit services when the balance is sufficient", async () => {

@@ -105,6 +105,12 @@ importers:
       '@koven/audit':
         specifier: workspace:*
         version: link:../../packages/audit
+      '@koven/consumer-agent':
+        specifier: workspace:*
+        version: link:../../agents/consumer
+      '@koven/credit-protocol':
+        specifier: workspace:*
+        version: link:../../packages/credit-protocol
       '@koven/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -336,7 +342,48 @@ importers:
         specifier: 5.0.3
         version: 5.0.3
 
-  tests/e2e: {}
+  tests/e2e:
+    dependencies:
+      '@koven/consumer-agent':
+        specifier: workspace:*
+        version: link:../../agents/consumer
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@koven/hedera':
+        specifier: workspace:*
+        version: link:../../packages/hedera
+      '@koven/lender-agents':
+        specifier: workspace:*
+        version: link:../../agents/lenders
+      '@koven/orchestrator':
+        specifier: workspace:*
+        version: link:../../apps/orchestrator
+      '@koven/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@koven/resource-server':
+        specifier: workspace:*
+        version: link:../../services/resource-server
+      '@koven/restricted-signer':
+        specifier: workspace:*
+        version: link:../../services/restricted-signer
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@x402/core':
+        specifier: 2.24.0
+        version: 2.24.0
+      '@x402/hedera':
+        specifier: 2.24.0
+        version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
+    devDependencies:
+      tsx:
+        specifier: 4.20.6
+        version: 4.20.6
 
 packages:
 

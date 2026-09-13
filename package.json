@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.tools.json && pnpm --recursive typecheck && pnpm typecheck:scripts",
     "test": "vitest run && pnpm test:scripts",
     "test:e2e": "pnpm --filter @koven/e2e test",
+    "test:e2e:testnet": "pnpm --filter @koven/e2e test:testnet",
     "zk:build": "pnpm --filter @koven/zk-policy build",
     "zk:setup-release": "pnpm --filter @koven/zk-policy setup-release",
     "zk:test": "pnpm --filter @koven/zk-policy test:artifacts",

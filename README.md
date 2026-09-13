@@ -83,7 +83,8 @@ credentials for local development.
 | `pnpm lint` | Run ESLint across sources, tests and tooling; warnings fail the command |
 | `pnpm typecheck` | Check tooling and every workspace, including contract type conformance |
 | `pnpm test` | Run all workspace Vitest suites; fail if no tests are discovered. Runs right after install, no artifacts needed |
-| `pnpm test:e2e` | Run the E2E test project (currently no tests) |
+| `pnpm test:e2e` | Run the complete real-service vertical flow with deterministic offline network boundaries |
+| `pnpm test:e2e:testnet` | Run the same vertical flow on Hedera testnet and print funding, payment and repayment HashScan links |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
 | `pnpm zk:test` | Run the Policy V1 feasibility benchmark on the verified official artifacts; requires `pnpm zk:build` first |
 
@@ -111,9 +112,12 @@ entirely empty test run.
 Build outputs stay in each workspace's ignored `dist/` directory; shared test
 configuration is compiled into `dist/tooling/`. Builds exclude tests, while
 `typecheck` includes them and works before a build. Package exports still point
-to TypeScript source for workspace development with tsx/Vitest. The web and E2E
-workspaces currently compile only their tool configuration: Next.js and the real
-E2E scenario belong to later tasks. This build does not compile Circom artifacts.
+to TypeScript source for workspace development with tsx/Vitest. The web workspace
+currently compiles only its tool configuration. The E2E workspace exercises real
+HTTP services offline by default; its separate testnet command requires disposable
+funded credentials from `.env`. The testnet command performs real HBAR transfers
+and retains its timestamped SQLite evidence under `.koven-testnet/`; run it only
+with low-balance test accounts. This build does not compile Circom artifacts.
 
 When adding a workspace, add its build configuration to the root `tsconfig.json`.
 When adding a workspace dependency, also reference its `tsconfig.build.json` from

@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
-import { ErrorCode } from "@koven/domain";
+import { ErrorCode, IllegalStateTransitionError } from "@koven/domain";
 import {
   createIdempotencyResult,
   getIdempotencyResult,
@@ -311,6 +311,24 @@ export class CompletionHandler {
     }
     const mission = getMission(this.options.database, policy.missionId);
     if (mission === undefined) throw new CompletionError(ErrorCode.MISSION_POLICY_MISSING, 403, "Mission is not available");
+    if (mission.state !== "running") {
+      if ([
+        "created",
+        "discovering-services",
+        "credit-requested",
+        "funded",
+        "payment-preparation",
+        "payment-authorized",
+        "service-paid",
+      ].includes(mission.state)) {
+        throw new CompletionError(
+          ErrorCode.SETTLEMENT_UNCONFIRMED,
+          503,
+          "Mission has not reached its callback-ready state",
+        );
+      }
+      throw new IllegalStateTransitionError(mission.state, "completed");
+    }
 
     let settlement: { readonly settledAt: string };
     try {

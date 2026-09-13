@@ -3,10 +3,28 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@koven/consumer-agent": "workspace:*",
+    "@koven/domain": "workspace:*",
+    "@koven/hedera": "workspace:*",
+    "@koven/lender-agents": "workspace:*",
+    "@koven/orchestrator": "workspace:*",
+    "@koven/persistence": "workspace:*",
+    "@koven/resource-server": "workspace:*",
+    "@koven/restricted-signer": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "@koven/x402": "workspace:*",
+    "@x402/core": "2.24.0",
+    "@x402/hedera": "2.24.0"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/e2e --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/e2e",
+    "test:testnet": "tsx --env-file=../../.env test/testnet.ts"
   }
 }

@@ -2,6 +2,7 @@ import { ErrorCode } from "@koven/domain";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  HttpMissionPolicyRegistrar,
   HttpRepaymentClient,
   HttpSignerCompletionClient,
 } from "../src/index.js";
@@ -11,6 +12,24 @@ const callbackHeaders = {
   idempotencyKey: `mission-complete:mission-1:${"a".repeat(64)}`,
   timestamp: "1789293600",
   signature: "b".repeat(64),
+};
+const missionPolicy = {
+  missionId: "mission-1",
+  borrowerAccountId: "0.0.1001",
+  spendingCapTinybar: "1000",
+  sessionId: "session-1",
+  sessionCapTinybar: "1000",
+  targetSha256: "c".repeat(64),
+  provider: {
+    id: "provider-a",
+    accountId: "0.0.3001",
+    endpoint: "https://provider.example",
+    capability: "solidity-scan",
+    priceTinybar: "100",
+    reputationScore: 0.9,
+    expectedLatencyMs: 50,
+  },
+  approvedRecipientsRoot: "1",
 };
 
 describe("orchestrator restricted-signer clients", () => {
@@ -84,11 +103,61 @@ describe("orchestrator restricted-signer clients", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("registers the exact mission policy through an authenticated service boundary", async () => {
+    const credential = "p".repeat(43);
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(new URL(input instanceof Request ? input.url : input).pathname).toBe("/internal/missions/register");
+      expect(init?.method).toBe("POST");
+      expect(init?.redirect).toBe("error");
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${credential}`);
+      expect(JSON.parse(String(init?.body))).toEqual(missionPolicy);
+      return new Response(JSON.stringify({
+        status: "registered",
+        missionId: missionPolicy.missionId,
+      }), { status: 200 });
+    });
+    const registrar = new HttpMissionPolicyRegistrar({
+      baseUrl: "https://signer.example",
+      credential,
+      fetch: fetchMock,
+    });
+
+    await expect(registrar.register(missionPolicy)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unavailable or mismatched mission-policy acknowledgements", async () => {
+    const credential = "p".repeat(43);
+    const unavailable = new HttpMissionPolicyRegistrar({
+      baseUrl: "https://signer.example",
+      credential,
+      fetch: vi.fn(async () => { throw new Error("offline"); }),
+    });
+    await expect(unavailable.register(missionPolicy)).rejects.toMatchObject({
+      status: 503,
+      code: ErrorCode.SETTLEMENT_UNCONFIRMED,
+    });
+
+    const mismatched = new HttpMissionPolicyRegistrar({
+      baseUrl: "https://signer.example",
+      credential,
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        status: "registered",
+        missionId: "mission-2",
+      }), { status: 200 })),
+    });
+    await expect(mismatched.register(missionPolicy)).rejects.toMatchObject({ status: 502 });
+  });
+
   it("rejects non-loopback cleartext signer origins", () => {
     expect(() => new HttpSignerCompletionClient({ baseUrl: "http://signer.example" })).toThrow(/HTTPS/);
     expect(() => new HttpRepaymentClient({
       baseUrl: "http://signer.example",
       credential: "r".repeat(43),
+    })).toThrow(/HTTPS/);
+    expect(() => new HttpMissionPolicyRegistrar({
+      baseUrl: "http://signer.example",
+      credential: "p".repeat(43),
     })).toThrow(/HTTPS/);
   });
 });

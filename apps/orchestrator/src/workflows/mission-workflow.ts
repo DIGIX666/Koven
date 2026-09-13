@@ -1,63 +1,68 @@
 import { randomUUID } from "node:crypto";
 
-import { ALLOWED_TRANSITIONS, type CreditOffer, type Loan, type MissionState, type Provider, type RankedProvider, type ScanPaymentAuthorization } from "@koven/domain";
-import type { HederaAdapter } from "@koven/hedera";
+import type {
+  ConsumerMissionExecutor,
+  ConsumerMissionProgress,
+  ConsumerMissionResult,
+} from "@koven/consumer-agent";
+import { loanIdForOffer } from "@koven/credit-protocol";
+import { ALLOWED_TRANSITIONS, type Loan, type MissionState, type Provider, type RankedProvider } from "@koven/domain";
 import {
   createLoan,
   createMission,
   getMission,
-  reserveSpending,
   saveMissionPolicy,
-  updateLoanState,
   type KovenDatabase,
   type PersistedMission,
 } from "@koven/persistence";
 import type { HttpRequest } from "@koven/schemas";
-import type { X402Client } from "@koven/x402";
-import type { ClientHederaSigner } from "@x402/hedera";
 
-import { hashBase64, hashBytes, hashCanonicalJson } from "../canonical.js";
+import { hashBytes } from "../canonical.js";
 import type { MissionStateMachine } from "../state/index.js";
-
-const FAKE_SIGNATURE = "b".repeat(128);
 
 class PolicyRejectedError extends Error {}
 
-export interface MissionWorkflowOptions {
-  database: KovenDatabase;
-  stateMachine: MissionStateMachine;
-  hedera: HederaAdapter;
-  signer: ClientHederaSigner;
-  x402Client: X402Client;
-  providers: readonly Provider[];
-  borrowerAccountId: string;
-  lenderAccountId: string;
-  approvedRecipientsRoot: string;
-  now?: () => string;
-  missionId?: () => string;
-  loanFeeTinybar?: bigint;
+export interface MissionPolicyRegistrar {
+  register(policy: HttpRequest<"registerMissionPolicy">): Promise<void>;
 }
 
-/** Deterministic mission workflow. Agent reasoning stays outside this sequence. */
+export interface MissionWorkflowOptions {
+  readonly database: KovenDatabase;
+  readonly stateMachine: MissionStateMachine;
+  readonly consumer: Pick<ConsumerMissionExecutor, "execute">;
+  readonly policyRegistrars: readonly MissionPolicyRegistrar[];
+  readonly providers: readonly Provider[];
+  readonly borrowerAccountId: string;
+  readonly approvedRecipientsRoot: string;
+  readonly now?: () => string;
+  readonly missionId?: () => string;
+  readonly sessionId?: (missionId: string) => string;
+}
+
+/** Coordinates trusted policy provisioning around the keyless consumer sequence. */
 export class MissionWorkflow {
   private readonly now: () => string;
   private readonly missionId: () => string;
-  private readonly loanFeeTinybar: bigint;
+  private readonly sessionId: (missionId: string) => string;
 
   constructor(private readonly options: MissionWorkflowOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.missionId = options.missionId ?? (() => `mission-${randomUUID()}`);
-    this.loanFeeTinybar = options.loanFeeTinybar ?? 1n;
+    this.sessionId = options.sessionId ?? (missionId => `session-${missionId}`);
+    if (options.policyRegistrars.length === 0) {
+      throw new Error("At least one trusted mission-policy registrar is required");
+    }
   }
 
   async run(request: HttpRequest<"createMission">): Promise<PersistedMission> {
     const id = this.missionId();
     const targetSha256 = hashBytes(request.source);
     const createdAt = this.now();
+    const spendingCapTinybar = BigInt(request.maxBudgetTinybar);
     createMission(this.options.database, {
       id,
       state: "created",
-      spendingCapTinybar: BigInt(request.maxBudgetTinybar),
+      spendingCapTinybar,
       spentTinybar: 0n,
       approvedRecipientsRoot: this.options.approvedRecipientsRoot,
       targetRef: request.targetRef,
@@ -73,9 +78,10 @@ export class MissionWorkflow {
       type: Parameters<MissionStateMachine["transition"]>[3]["type"],
       payload: unknown,
       transactionId?: string,
+      persistAdditionalState?: () => void,
     ): Promise<void> => {
       const audit = transactionId === undefined ? { type, payload } : { type, payload, transactionId };
-      await this.options.stateMachine.transition(id, state, to, audit);
+      await this.options.stateMachine.transition(id, state, to, audit, persistAdditionalState);
       state = to;
     };
 
@@ -85,107 +91,112 @@ export class MissionWorkflow {
         targetRef: request.targetRef,
         targetSha256,
       });
-      const ranked = rankProviders(this.options.providers, BigInt(request.maxBudgetTinybar));
+      const ranked = rankProviders(this.options.providers, spendingCapTinybar);
       const selected = ranked[0];
       if (selected === undefined) {
         await move("payment-preparation", "providers-ranked", { ranked });
         throw new PolicyRejectedError("No provider is available");
       }
-
       const provider = selected.provider;
-      if (provider.priceTinybar > BigInt(request.maxBudgetTinybar)) {
+      if (provider.priceTinybar > spendingCapTinybar) {
         await move("payment-preparation", "providers-ranked", { ranked });
         throw new PolicyRejectedError("Selected provider exceeds the mission budget");
       }
+
+      const sessionId = this.sessionId(id);
       saveMissionPolicy(this.options.database, {
         missionId: id,
         borrowerAccountId: this.options.borrowerAccountId,
-        spendingCapTinybar: BigInt(request.maxBudgetTinybar),
-        sessionId: `session-${id}`,
-        sessionCapTinybar: BigInt(request.maxBudgetTinybar),
+        spendingCapTinybar,
+        sessionId,
+        sessionCapTinybar: spendingCapTinybar,
         targetSha256,
         provider,
         approvedRecipientsRoot: this.options.approvedRecipientsRoot,
         createdAt,
       });
-      const balance = await this.options.hedera.getBalanceTinybar(this.options.borrowerAccountId);
-      const requiredCredit = checkBudget(balance, provider.priceTinybar);
+      const policy = {
+        missionId: id,
+        borrowerAccountId: this.options.borrowerAccountId,
+        spendingCapTinybar: spendingCapTinybar.toString(10),
+        sessionId,
+        sessionCapTinybar: spendingCapTinybar.toString(10),
+        targetSha256,
+        provider: { ...provider, priceTinybar: provider.priceTinybar.toString(10) },
+        approvedRecipientsRoot: this.options.approvedRecipientsRoot,
+      } satisfies HttpRequest<"registerMissionPolicy">;
+      await Promise.all(this.options.policyRegistrars.map(registrar => registrar.register(policy)));
 
-      if (requiredCredit > 0n) {
-        await move("credit-requested", "credit-requested", { principalTinybar: requiredCredit });
-        // Credit negotiation remains inline until runtime composition delegates it to the consumer service.
-        const offers = requestCredit(
-          id,
-          requiredCredit,
-          this.loanFeeTinybar,
-          this.options.lenderAccountId,
-          this.now(),
-        );
-        const offer = selectOffer(offers);
-        loan = await this.acceptOffer(id, offer);
-        await move("funded", "offer-accepted", { offerId: offer.id });
-        await move("payment-preparation", "loan-funded", {
-          loanId: loan.id,
-          fundingTxId: loan.fundingTxId,
-        });
-      } else {
-        await move("payment-preparation", "providers-ranked", { ranked });
+      const result = await this.options.consumer.execute(
+        {
+          missionId: id,
+          targetRef: request.targetRef,
+          source: request.source,
+          maxBudgetTinybar: spendingCapTinybar,
+          provider,
+        },
+        {
+          onProgress: async event => {
+            switch (event.type) {
+              case "credit-requested":
+                await move("credit-requested", "credit-requested", {
+                  requestId: event.request.id,
+                  principalTinybar: event.request.principalTinybar,
+                });
+                return;
+              case "funded": {
+                const fundedLoan = this.loanFromFunding(id, event);
+                await move(
+                  "funded",
+                  "offer-accepted",
+                  { offerId: event.offer.id, fundingTxId: event.fundingTxId },
+                  event.fundingTxId,
+                  () => createLoan(this.options.database, fundedLoan),
+                );
+                loan = fundedLoan;
+                return;
+              }
+              case "payment-preparation":
+                if (state === "funded" && loan !== undefined) {
+                  await move("payment-preparation", "loan-funded", {
+                    loanId: loan.id,
+                    fundingTxId: loan.fundingTxId,
+                  }, loan.fundingTxId);
+                  return;
+                }
+                if (state === "discovering-services") {
+                  await move("payment-preparation", "providers-ranked", { ranked });
+                  return;
+                }
+                throw new PolicyRejectedError(`Payment preparation is invalid from ${state}`);
+              case "payment-authorized":
+                await move("payment-authorized", "payment-authorized", {
+                  providerId: provider.id,
+                  amountTinybar: event.amountTinybar,
+                  nonce: event.nonce,
+                }, event.transactionId);
+                return;
+              case "service-paid":
+                this.assertScanResult(id, targetSha256, provider, event.scan);
+                await move("service-paid", "x402-settled", {
+                  providerId: provider.id,
+                  amountTinybar: event.scan.receipt.amountTinybar,
+                }, event.scan.receipt.transactionId);
+                return;
+            }
+          },
+        },
+      );
+      this.assertConsumerResult(id, targetSha256, provider, result, loan);
+      if ((state as MissionState) !== "service-paid") {
+        throw new PolicyRejectedError("Consumer did not report paid-service progress");
       }
-
-      const scanRequest = {
-        missionId: id,
-        targetRef: request.targetRef,
-        source: request.source,
-        targetSha256,
-      };
-      const challenge = await this.options.x402Client.request(scanRequest);
-      const amountTinybar = validateChallenge(
-        challenge.requirements,
-        provider,
-        BigInt(request.maxBudgetTinybar),
-      );
-      const signedTransaction = await this.options.signer
-        .createPartiallySignedTransferTransaction(challenge.requirements);
-      const transactionSha256 = hashBase64(signedTransaction);
-      // This local reservation is replaced by the signer-owned authorization in runtime composition.
-      reserveSpending(this.options.database, {
-        missionId: id,
-        nonce: "1",
-        paymentCommitment: transactionSha256,
-        amountTinybar,
-        consumedAt: this.now(),
-      });
-      // This placeholder is replaced by the remote signer's authorization in runtime composition.
-      const authorization = createAuthorization(
-        id,
-        targetSha256,
-        transactionSha256,
-        provider,
-        challenge.requirements.maxTimeoutSeconds,
-        this.options.borrowerAccountId,
-        this.now(),
-      );
-      await move("payment-authorized", "payment-authorized", {
-        providerId: provider.id,
-        amountTinybar,
-        nonce: authorization.nonce,
-      });
-
-      const paid = await this.options.x402Client.retryWithPayment(
-        { ...scanRequest, paymentAuthorization: authorization },
-        signedTransaction,
-      );
-      validateSettlement(id, targetSha256, provider, amountTinybar, paid);
-      await move("service-paid", "x402-settled", {
-        providerId: provider.id,
-        amountTinybar,
-      }, paid.receipt.transactionId);
       await move("running", "report-received", {
         providerId: provider.id,
-        reportSha256: paid.report.reportSha256,
+        reportSha256: result.scan.report.reportSha256,
       });
     } catch (error) {
-      await this.finishFailure(id, state, loan, move, error);
+      await this.finishFailure(state, loan, move, error);
     }
 
     const completed = getMission(this.options.database, id);
@@ -193,32 +204,85 @@ export class MissionWorkflow {
     return completed;
   }
 
-  private async acceptOffer(missionId: string, offer: CreditOffer): Promise<Loan> {
-    const loan: Loan = {
-      id: `loan-${missionId}`,
-      offerId: offer.id,
+  private loanFromFunding(
+    missionId: string,
+    event: Extract<ConsumerMissionProgress, { type: "funded" }>,
+  ): Loan {
+    this.assertCreditBinding(missionId, event);
+    return {
+      id: loanIdForOffer(event.offer.id),
+      offerId: event.offer.id,
       missionId,
-      lenderAccountId: offer.lenderAccountId,
-      principalTinybar: offer.principalTinybar,
-      feeTinybar: offer.feeTinybar,
-      state: "offered",
+      lenderAccountId: event.offer.lenderAccountId,
+      principalTinybar: event.offer.principalTinybar,
+      feeTinybar: event.offer.feeTinybar,
+      state: "funded",
+      fundingTxId: event.fundingTxId,
     };
-    createLoan(this.options.database, loan);
-    updateLoanState(this.options.database, loan.id, "offered", "accepted");
-    const funding = await this.options.hedera.transferHbar({
-      from: this.options.lenderAccountId,
-      to: this.options.borrowerAccountId,
-      amountTinybar: loan.principalTinybar,
-      memo: `fund:${loan.id}`,
-    });
-    updateLoanState(this.options.database, loan.id, "accepted", "funded", {
-      fundingTxId: funding.transactionId,
-    });
-    return { ...loan, state: "funded", fundingTxId: funding.transactionId };
+  }
+
+  private assertConsumerResult(
+    missionId: string,
+    targetSha256: string,
+    provider: Provider,
+    result: ConsumerMissionResult,
+    loan: Loan | undefined,
+  ): void {
+    this.assertScanResult(missionId, targetSha256, provider, result.scan);
+    if (result.credit === undefined) {
+      if (loan !== undefined) throw new PolicyRejectedError("Consumer omitted previously funded credit");
+      return;
+    }
+    this.assertCreditBinding(missionId, result.credit);
+    if (loan === undefined
+      || loan.id !== loanIdForOffer(result.credit.offer.id)
+      || loan.offerId !== result.credit.offer.id
+      || loan.lenderAccountId !== result.credit.offer.lenderAccountId
+      || loan.principalTinybar !== result.credit.offer.principalTinybar
+      || loan.feeTinybar !== result.credit.offer.feeTinybar
+      || loan.fundingTxId !== result.credit.fundingTxId) {
+      throw new PolicyRejectedError("Consumer result differs from persisted funded credit");
+    }
+  }
+
+  private assertScanResult(
+    missionId: string,
+    targetSha256: string,
+    provider: Provider,
+    scan: ConsumerMissionResult["scan"],
+  ): void {
+    if (
+      scan.receipt.missionId !== missionId
+      || scan.receipt.payer !== this.options.borrowerAccountId
+      || scan.receipt.recipientAccountId !== provider.accountId
+      || scan.receipt.amountTinybar !== provider.priceTinybar
+      || scan.report.missionId !== missionId
+      || scan.report.targetSha256 !== targetSha256
+      || scan.report.providerId !== provider.id
+    ) throw new PolicyRejectedError("Consumer result is not bound to the selected mission and provider");
+  }
+
+  private assertCreditBinding(
+    missionId: string,
+    credit: Extract<ConsumerMissionProgress, { type: "funded" }> | NonNullable<ConsumerMissionResult["credit"]>,
+  ): void {
+    const accepted = credit.acceptance.acceptance;
+    if (credit.request.missionId !== missionId
+      || credit.request.borrowerAccountId !== this.options.borrowerAccountId
+      || credit.offer.requestId !== credit.request.id
+      || credit.offer.principalTinybar !== credit.request.principalTinybar
+      || accepted.requestId !== credit.request.id
+      || accepted.missionId !== missionId
+      || accepted.borrowerAccountId !== this.options.borrowerAccountId
+      || accepted.lenderAccountId !== credit.offer.lenderAccountId
+      || accepted.offerId !== credit.offer.id
+      || accepted.termsHash !== credit.offer.termsHash
+      || accepted.expiresAt !== credit.offer.expiresAt) {
+      throw new PolicyRejectedError("Consumer credit is not bound to the mission and accepted offer");
+    }
   }
 
   private async finishFailure(
-    missionId: string,
     initialState: MissionState,
     loan: Loan | undefined,
     move: (
@@ -226,6 +290,7 @@ export class MissionWorkflow {
       type: Parameters<MissionStateMachine["transition"]>[3]["type"],
       payload: unknown,
       transactionId?: string,
+      persistAdditionalState?: () => void,
     ) => Promise<void>,
     error: unknown,
   ): Promise<void> {
@@ -241,22 +306,11 @@ export class MissionWorkflow {
     } else if ((ALLOWED_TRANSITIONS[state] as readonly MissionState[]).includes("failed")) {
       await moveFailure("failed", "mission-failed");
     }
-
     if (state === "policy-rejected" || state === "failed") {
       await moveFailure("recovery", "mission-failed");
     }
     if (state !== "recovery") return;
-
-    if (loan === undefined) {
-      await moveFailure("closed", "mission-failed");
-      return;
-    }
-
-    await moveFailure("defaulted", "mission-failed");
-
-    if (getMission(this.options.database, missionId) === undefined) {
-      throw new Error(`Mission disappeared during recovery: ${missionId}`);
-    }
+    await moveFailure(loan === undefined ? "closed" : "defaulted", "mission-failed");
   }
 }
 
@@ -264,7 +318,6 @@ export function rankProviders(
   providers: readonly Provider[],
   maxBudgetTinybar: bigint,
 ): RankedProvider[] {
-  // Capability filtering and the final scoring policy are added with provider competition.
   const denominator = Number(maxBudgetTinybar === 0n ? 1n : maxBudgetTinybar);
   return providers.map(provider => {
     const price = 1 - Math.min(Number(provider.priceTinybar) / denominator, 1);
@@ -276,110 +329,4 @@ export function rankProviders(
       breakdown: { price, reputation, latency },
     };
   }).sort((left, right) => right.score - left.score || left.provider.id.localeCompare(right.provider.id));
-}
-
-export const checkBudget = (balanceTinybar: bigint, priceTinybar: bigint): bigint => (
-  balanceTinybar >= priceTinybar ? 0n : priceTinybar - balanceTinybar
-);
-
-export function requestCredit(
-  missionId: string,
-  principalTinybar: bigint,
-  feeTinybar: bigint,
-  lenderAccountId: string,
-  now: string,
-): CreditOffer[] {
-  const requestId = `credit-${missionId}`;
-  const termSeconds = 3_600;
-  const expiresAt = new Date(Date.parse(now) + termSeconds * 1_000).toISOString();
-  const termsHash = hashCanonicalJson({
-    requestId,
-    lenderAccountId,
-    principalTinybar,
-    feeTinybar,
-    termSeconds,
-    expiresAt,
-  });
-  return [{
-    id: `offer-${missionId}`,
-    requestId,
-    lenderAccountId,
-    principalTinybar,
-    feeTinybar,
-    termSeconds,
-    expiresAt,
-    termsHash,
-    signature: FAKE_SIGNATURE,
-  }];
-}
-
-export function selectOffer(offers: readonly CreditOffer[]): CreditOffer {
-  const selected = [...offers].sort((left, right) => {
-    if (left.feeTinybar !== right.feeTinybar) return left.feeTinybar < right.feeTinybar ? -1 : 1;
-    return left.id.localeCompare(right.id);
-  })[0];
-  if (selected === undefined) throw new Error("No credit offer is available");
-  return selected;
-}
-
-function validateChallenge(
-  requirements: Parameters<ClientHederaSigner["createPartiallySignedTransferTransaction"]>[0],
-  provider: Provider,
-  missionCapTinybar: bigint,
-): bigint {
-  const amount = BigInt(requirements.amount);
-  if (requirements.scheme !== "exact"
-    || requirements.network !== "hedera:testnet"
-    || requirements.asset !== "0.0.0"
-    || requirements.payTo !== provider.accountId
-    || amount !== provider.priceTinybar
-    || amount > missionCapTinybar) {
-    throw new PolicyRejectedError("x402 challenge does not satisfy the mission policy");
-  }
-  return amount;
-}
-
-function createAuthorization(
-  missionId: string,
-  targetSha256: string,
-  transactionSha256: string,
-  provider: Provider,
-  timeoutSeconds: number,
-  borrowerAccountId: string,
-  now: string,
-): ScanPaymentAuthorization {
-  const timestamp = Date.parse(now);
-  const transactionId = `${borrowerAccountId}@${Math.floor(timestamp / 1_000)}.000000001`;
-  return {
-    missionId,
-    targetSha256,
-    transactionSha256,
-    transactionId,
-    borrowerAccountId,
-    providerAccountId: provider.accountId,
-    scanUrl: `${provider.endpoint}/scan`,
-    amountTinybar: provider.priceTinybar,
-    network: "hedera:testnet",
-    asset: "0.0.0",
-    nonce: "1",
-    expiresAt: new Date(timestamp + timeoutSeconds * 1_000).toISOString(),
-    signature: FAKE_SIGNATURE,
-  };
-}
-
-function validateSettlement(
-  missionId: string,
-  targetSha256: string,
-  provider: Provider,
-  amountTinybar: bigint,
-  paid: Awaited<ReturnType<X402Client["retryWithPayment"]>>,
-): void {
-  if (paid.receipt.missionId !== missionId
-    || paid.receipt.recipientAccountId !== provider.accountId
-    || paid.receipt.amountTinybar !== amountTinybar
-    || paid.report.missionId !== missionId
-    || paid.report.targetSha256 !== targetSha256
-    || paid.report.providerId !== provider.id) {
-    throw new Error("Paid resource response is not bound to the mission");
-  }
 }
