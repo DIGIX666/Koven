@@ -66,6 +66,9 @@ importers:
       '@koven/hedera':
         specifier: workspace:*
         version: link:../../packages/hedera
+      '@koven/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -155,6 +158,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@koven/directory':
+        specifier: workspace:*
+        version: link:../../services/directory
       '@koven/testing':
         specifier: workspace:*
         version: link:../../packages/testing

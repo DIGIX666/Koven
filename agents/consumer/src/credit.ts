@@ -47,6 +47,8 @@ export interface ConsumerCreditSigner {
 
 export interface ConsumerLender {
   quote(request: CreditRequest): Promise<CreditOffer | null>;
+  /** Revalidates an offer under this lender client's trusted key and clock. */
+  isOfferValid(offer: CreditOffer, request: CreditRequest): boolean;
   accept(
     signed: SignedCreditAcceptance,
     evidence?: CreditEvidence,
@@ -230,6 +232,15 @@ export class HttpLender implements ConsumerLender {
     const offer = offerFromWire(CreditOfferSchema.parse(await response.json()));
     validateCreditOffer(offer, request, this.options.publicKey, this.now());
     return offer;
+  }
+
+  isOfferValid(offer: CreditOffer, request: CreditRequest): boolean {
+    try {
+      validateCreditOffer(offer, request, this.options.publicKey, this.now());
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async accept(

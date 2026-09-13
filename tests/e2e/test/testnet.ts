@@ -275,7 +275,7 @@ try {
       // Exercise credit deliberately; the balance preflight above reserves repayment funds.
       balance: { getBalanceTinybar: async () => 0n },
       signer: new HttpCreditSigner({ baseUrl: signerUrl, credential: consumerCredential }),
-      lender: new HttpLender({ baseUrl: lenderUrl, publicKey: lenderKey.publicKey }),
+      lenders: [new HttpLender({ baseUrl: lenderUrl, publicKey: lenderKey.publicKey })],
       payment: new ConsumerPaymentService({
         borrowerAccountId: consumerAccountId,
         authorizer: createHttpPaymentAuthorizer({ baseUrl: signerUrl, credential: consumerCredential }),
@@ -290,7 +290,16 @@ try {
         new HttpMissionPolicyRegistrar({ baseUrl: signerUrl, credential: registrarCredential }),
         new HttpMissionPolicyRegistrar({ baseUrl: lenderUrl, credential: lenderOperatorCredential }),
       ],
-      providers: [provider],
+      providerDirectory: {
+        rank: async () => ({
+          ranked: [{
+            provider,
+            score: 1,
+            breakdown: { price: 1, reputation: 1, latency: 1 },
+          }],
+          formula: "testnet provider",
+        }),
+      },
       borrowerAccountId: consumerAccountId,
     });
     return createOrchestratorApp({

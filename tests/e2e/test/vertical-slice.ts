@@ -328,11 +328,11 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
         getBalanceTinybar: async accountId => balances.get(accountId) ?? 0n,
       },
       signer: new HttpCreditSigner({ baseUrl: signerUrl, credential: credentials.consumer }),
-      lender: new HttpLender({
+      lenders: [new HttpLender({
         baseUrl: lenderUrl,
         publicKey: lenderKey.publicKey,
         now: () => new Date(clock).toISOString(),
-      }),
+      })],
       payment: new ConsumerPaymentService({
         borrowerAccountId: consumerAccountId,
         authorizer: createHttpPaymentAuthorizer({
@@ -358,7 +358,16 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
           credential: credentials.lenderOperator,
         }),
       ],
-      providers: [provider],
+      providerDirectory: {
+        rank: async () => ({
+          ranked: [{
+            provider,
+            score: 1,
+            breakdown: { price: 1, reputation: 1, latency: 1 },
+          }],
+          formula: "vertical test provider",
+        }),
+      },
       borrowerAccountId: consumerAccountId,
       poseidon,
       now: () => new Date(clock).toISOString(),

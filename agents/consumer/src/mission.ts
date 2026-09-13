@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { canonicalHash, type SignedCreditAcceptance } from "@koven/credit-protocol";
 import { ErrorCode, type CreditOffer, type CreditRequest, type Provider, type ScanRequest } from "@koven/domain";
+import { selectCreditOffer } from "@koven/policy";
 import { ProviderSchema, ScanRequestSchema, TinybarString } from "@koven/schemas";
 
 import {
@@ -69,7 +70,7 @@ export interface ConsumerMissionExecutorOptions {
   readonly borrowerAccountId: string;
   readonly balance: ConsumerBalanceReader;
   readonly signer: ConsumerCreditSigner;
-  readonly lender: ConsumerLender;
+  readonly lenders: readonly ConsumerLender[];
   readonly payment: ConsumerPayment;
   readonly now?: () => string;
   readonly requestId?: () => string;
@@ -107,6 +108,7 @@ export class ConsumerMissionExecutor {
     if (!Number.isInteger(this.fundingRetryDelayMs) || this.fundingRetryDelayMs < 1 || this.fundingRetryDelayMs > 60_000) {
       throw new RangeError("Funding retry delay must be between 1 and 60000 ms");
     }
+    if (options.lenders.length === 0) throw new Error("At least one lender is required");
   }
 
   async execute(
@@ -155,20 +157,19 @@ export class ConsumerMissionExecutor {
         missionId: input.missionId,
         borrowerAccountId: this.options.borrowerAccountId,
         principalTinybar,
-        requestedTermSeconds: input.requestedTermSeconds ?? 3_600,
+        requestedTermSeconds: input.requestedTermSeconds ?? 600,
         purposeHash: canonicalHash({ missionId: input.missionId, targetSha256: scanRequest.targetSha256 }),
         createdAt: this.now(),
       };
       try {
         const request = await this.options.signer.signCreditRequest(unsigned);
         await observer?.onProgress({ type: "credit-requested", request });
-        const offer = await this.options.lender.quote(request);
-        if (offer === null) throw new Error("Lender declined the credit request");
+        const { lender, offer } = await this.selectLender(request);
         const evidence: CreditEvidence = prepared.bundle !== undefined
           ? { paymentIntent: paymentIntentWire(prepared.intent), paymentProofBundle: prepared.bundle }
           : (input.creditEvidence ?? {});
         const acceptance = await this.options.signer.signCreditAcceptance(offer, evidence);
-        const { fundingTxId } = await this.awaitFunding(acceptance, evidence);
+        const { fundingTxId } = await this.awaitFunding(lender, acceptance, evidence);
         credit = { request, offer, acceptance, fundingTxId };
       } catch (error) {
         rethrowPolicyRejection(error);
@@ -181,13 +182,45 @@ export class ConsumerMissionExecutor {
     return credit === undefined ? { scan } : { scan, credit };
   }
 
+  private async selectLender(request: CreditRequest): Promise<{
+    lender: ConsumerLender;
+    offer: CreditOffer;
+  }> {
+    const responses = await Promise.all(this.options.lenders.map(async lender => {
+      try {
+        return { lender, offer: await lender.quote(request) };
+      } catch (error) {
+        return { lender, offer: null, error };
+      }
+    }));
+    const candidates = responses.filter(
+      (candidate): candidate is { lender: ConsumerLender; offer: CreditOffer; error?: never } => candidate.offer !== null,
+    );
+    const selection = selectCreditOffer(candidates.map(candidate => candidate.offer), {
+      requiredPrincipalTinybar: request.principalTinybar,
+      now: this.now(),
+      verifySignature: offer => candidates.some(candidate => (
+        candidate.offer === offer && candidate.lender.isOfferValid(offer, request)
+      )),
+    });
+    if (selection === null) {
+      const failure = responses.find(candidate => "error" in candidate);
+      if (failure?.error !== undefined) throw failure.error;
+      throw new Error("All lenders declined the credit request");
+    }
+    const selected = candidates.find(candidate => candidate.offer === selection.winner);
+    if (selected === undefined) throw new Error("Selected offer has no lender client");
+    return selected;
+  }
+
   private async awaitFunding(
+    lender: ConsumerLender,
     acceptance: SignedCreditAcceptance,
     evidence: CreditEvidence,
   ): Promise<{ fundingTxId: string }> {
     for (let attempt = 1; attempt <= this.fundingMaxAttempts; attempt += 1) {
       try {
-        return await this.options.lender.accept(acceptance, evidence);
+        return await lender.accept(acceptance, evidence);
       } catch (error) {
         const pending = error instanceof ConsumerServiceError
           && error.status === 503
