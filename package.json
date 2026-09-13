@@ -20,7 +20,8 @@
     "dev:lenders": "tsx scripts/run-lenders.ts",
     "dev:directory": "tsx scripts/run-directory.ts",
     "dev:registrar": "tsx scripts/run-directory.ts --registrar",
-    "dev:providers": "tsx scripts/run-providers.ts"
+    "dev:providers": "tsx scripts/run-providers.ts",
+    "audit:flush": "tsx scripts/audit-flush.ts"
   },
   "engines": {
     "node": ">=20"
@@ -40,6 +41,7 @@
     "@koven/lender-agents": "workspace:*",
     "@koven/directory": "workspace:*",
     "@koven/persistence": "workspace:*",
+    "@koven/audit": "workspace:*",
     "vitest": "2.1.9"
   },
   "type": "module",

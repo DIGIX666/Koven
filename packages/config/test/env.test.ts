@@ -67,6 +67,7 @@ describe("environment loading", () => {
     expect(signer.privateKey).toBe("consumer-secret");
     expect(lender.privateKey).toBe("lender-b-secret");
     expect(loadOperatorEnv(validEnvironment).privateKey).toBe("operator-secret");
+    expect(orchestrator.auditSink).toBe("noop");
     for (const view of publicViews) {
       expect(view).not.toHaveProperty("privateKey");
       expect(Object.values(view)).not.toContain("consumer-secret");
@@ -92,6 +93,12 @@ describe("environment loading", () => {
       network: "hedera:testnet",
       asset: "0.0.0",
     });
+  });
+
+  test("validates the orchestrator audit sink without requiring HCS credentials", () => {
+    expect(loadOrchestratorEnv({ ...validEnvironment, AUDIT_SINK: "hcs" }).auditSink).toBe("hcs");
+    expect(() => loadOrchestratorEnv({ ...validEnvironment, AUDIT_SINK: "stdout" }))
+      .toThrowError(/AUDIT_SINK/);
   });
 
   test("loads a service without requiring secrets owned by another process", () => {

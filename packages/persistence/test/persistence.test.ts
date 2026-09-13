@@ -185,7 +185,7 @@ describe("SQLite persistence", () => {
     expect(listMissionEvents(database, "mission-1")).toHaveLength(1);
     expect(getSpendingReservation(database, "mission-1", "1")?.amountTinybar).toBe(25n);
     expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get())
-      .toEqual({ count: 2 });
+      .toEqual({ count: 3 });
   });
 
   it("returns the stored idempotency result for a replay and rejects conflicting content", () => {

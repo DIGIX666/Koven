@@ -7,7 +7,7 @@ type Environment = Record<string, string | undefined>;
 export function buildLenderEnvironments(source: Environment) {
   const environments = (["A", "B"] as const).map(name => {
     const environment: Environment = {};
-    for (const key of ["CONSUMER_ACCOUNT_ID", "CONSUMER_PUBLIC_KEY", "HEDERA_MIRROR_NODE_URL", "LENDER_PROOF_MODE", "LENDER_VERIFICATION_KEY_PATH", "LENDER_TRUSTED_VKEY_SHA256", "SIGNER_URL", "LENDER_BORROWER_REPUTATION"]) environment[key] = source[key];
+    for (const key of ["CONSUMER_ACCOUNT_ID", "CONSUMER_PUBLIC_KEY", "HEDERA_MIRROR_NODE_URL", "HCS_AUDIT_TOPIC_ID", "LENDER_PROOF_MODE", "LENDER_VERIFICATION_KEY_PATH", "LENDER_TRUSTED_VKEY_SHA256", "SIGNER_URL", "LENDER_BORROWER_REPUTATION"]) environment[key] = source[key];
     for (const key of ["ACCOUNT_ID", "PRIVATE_KEY", "PORT", "DATABASE_URL", "REGISTRAR_CREDENTIAL", "SIGNER_CREDENTIAL"]) {
       const value = source[`LENDER_${name}_${key}`];
       if (!value) throw new Error(`Missing LENDER_${name}_${key}`);

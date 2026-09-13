@@ -55,7 +55,8 @@ export async function getTopicMessages(topicId: string, opts: TopicMessagesOptio
   url.searchParams.set("encoding", "base64");
   url.searchParams.set("order", "asc");
   url.searchParams.set("limit", String(limit));
-  url.searchParams.set("sequencenumber", `gt:${after}`);
+  // The Mirror Node accepts only positive sequence numbers in this filter (`gt:0` is HTTP 400).
+  if (after > 0n) url.searchParams.set("sequencenumber", `gt:${after}`);
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
   if (!response.ok) throw new Error(`Mirror request failed with HTTP ${response.status}`);
   const body = record(await response.json());

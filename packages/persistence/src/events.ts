@@ -1,4 +1,4 @@
-import type { AuditEvent, AuditEventType } from "@koven/audit";
+import { serializeHcsEnvelope, type AuditEvent, type AuditEventType } from "@koven/audit";
 
 import type { KovenDatabase } from "./db.js";
 import { isUniqueConstraint, PersistenceConflict, PersistenceConflictError } from "./db.js";
@@ -12,16 +12,23 @@ interface EventRow {
   transaction_id: string | null;
   occurred_at: string;
   published_at: string | null;
+  hcs_transaction_id: string | null;
+  hcs_sequence_number: string | null;
 }
 
 export interface LocalEvent<T = unknown> extends AuditEvent {
   payload: T;
   publishedAt?: string;
+  hcsTransactionId?: string;
+  hcsSequenceNumber?: bigint;
 }
 
 /** Stores the complete local payload while keeping public audit fields queryable. */
 export function createEvent<T>(database: KovenDatabase, event: LocalEvent<T>): void {
-  try {
+  const envelopeJson = serializeHcsEnvelope(event);
+  const now = Date.parse(event.occurredAt);
+  if (!Number.isFinite(now)) throw new Error("Event occurredAt must be an ISO timestamp");
+  const insert = database.transaction(() => {
     database.prepare(`
       INSERT INTO events (
         id, mission_id, type, payload_hash, payload_json,
@@ -40,6 +47,23 @@ export function createEvent<T>(database: KovenDatabase, event: LocalEvent<T>): v
       occurredAt: event.occurredAt,
       publishedAt: event.publishedAt ?? null,
     });
+    database.prepare(`
+      INSERT INTO hcs_audit_outbox (
+        event_id, mission_id, envelope_json, status, next_attempt_at,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      event.id,
+      event.missionId,
+      envelopeJson,
+      event.publishedAt === undefined ? "pending" : "published",
+      now,
+      now,
+      now,
+    );
+  });
+  try {
+    insert.immediate();
   } catch (error) {
     if (!isUniqueConstraint(error)) throw error;
     throw new PersistenceConflictError(
@@ -55,7 +79,8 @@ export function listMissionEvents<T = unknown>(
 ): LocalEvent<T>[] {
   const rows = database.prepare(`
     SELECT id, mission_id, type, payload_hash, payload_json,
-           transaction_id, occurred_at, published_at
+           transaction_id, occurred_at, published_at,
+           hcs_transaction_id, hcs_sequence_number
     FROM events
     WHERE mission_id = ?
     ORDER BY seq
@@ -72,6 +97,8 @@ export function listMissionEvents<T = unknown>(
     };
     if (row.transaction_id !== null) event.transactionId = row.transaction_id;
     if (row.published_at !== null) event.publishedAt = row.published_at;
+    if (row.hcs_transaction_id !== null) event.hcsTransactionId = row.hcs_transaction_id;
+    if (row.hcs_sequence_number !== null) event.hcsSequenceNumber = BigInt(row.hcs_sequence_number);
     return event;
   });
 }
@@ -80,12 +107,13 @@ export function markEventPublished(
   database: KovenDatabase,
   id: string,
   transactionId: string,
+  sequenceNumber: bigint,
   publishedAt: string,
 ): boolean {
   const result = database.prepare(`
     UPDATE events
-    SET transaction_id = ?, published_at = ?
+    SET hcs_transaction_id = ?, hcs_sequence_number = ?, published_at = ?
     WHERE id = ? AND published_at IS NULL
-  `).run(transactionId, publishedAt, id);
+  `).run(transactionId, sequenceNumber.toString(10), publishedAt, id);
   return result.changes === 1;
 }

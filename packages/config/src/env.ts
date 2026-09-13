@@ -12,6 +12,7 @@ const url = z.preprocess(emptyAsMissing, z.string().url());
 const port = z.preprocess(emptyAsMissing, z.coerce.number().int().min(1).max(65_535));
 const decimal = z.preprocess(emptyAsMissing, z.string().regex(/^(0|[1-9]\d*)$/));
 const hbarAsset = z.preprocess(value => value === "HBAR" ? "0.0.0" : value, z.literal("0.0.0"));
+const auditSink = z.preprocess(emptyAsMissing, z.enum(["noop", "hcs"]).default("noop"));
 
 const fields = {
   HEDERA_NETWORK: z.literal("testnet"),
@@ -36,6 +37,7 @@ const fields = {
   RESOURCE_SERVER_PORT: port,
   RESTRICTED_SIGNER_PORT: port,
   DATABASE_URL: requiredString,
+  AUDIT_SINK: auditSink,
 } as const;
 
 const schema = <K extends keyof typeof fields>(...keys: K[]) => z.object(
@@ -50,6 +52,7 @@ const signerSchema = schema(
 const orchestratorSchema = schema(
   "CONSUMER_ACCOUNT_ID", "ORCHESTRATOR_PORT", "DIRECTORY_PORT", "RESOURCE_SERVER_PORT",
   "RESTRICTED_SIGNER_PORT", "DATABASE_URL",
+  "AUDIT_SINK",
 );
 const consumerSchema = schema(
   "X402_NETWORK", "CONSUMER_ACCOUNT_ID", "RESOURCE_SERVER_PORT", "RESTRICTED_SIGNER_PORT",
@@ -101,6 +104,7 @@ export interface OrchestratorEnv {
   resourceServerPort: number;
   restrictedSignerPort: number;
   databaseUrl: string;
+  auditSink: "noop" | "hcs";
 }
 
 export interface ConsumerEnv {
@@ -170,6 +174,7 @@ export function loadOrchestratorEnv(source: EnvironmentSource = process.env): Or
     resourceServerPort: env.RESOURCE_SERVER_PORT,
     restrictedSignerPort: env.RESTRICTED_SIGNER_PORT,
     databaseUrl: env.DATABASE_URL,
+    auditSink: env.AUDIT_SINK,
   });
 }
 

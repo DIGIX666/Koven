@@ -78,8 +78,8 @@ export class MissionStateMachine {
     });
 
     const mission = persist.immediate();
-    // The durable local event is authoritative until the HCS outbox lands in M5.
-    // A best-effort sink failure must not invalidate an already committed transition.
+    // The local event and HCS outbox row are already committed atomically.
+    // Waking the worker must not invalidate that durable transition.
     await this.auditSink.write(event).catch(() => undefined);
     return mission;
   }

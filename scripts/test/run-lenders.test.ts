@@ -21,6 +21,7 @@ test("launches two real lender apps with isolated keys, stores and policies", as
   const source: Record<string, string> = {
     CONSUMER_ACCOUNT_ID: "0.0.10", CONSUMER_PUBLIC_KEY: PrivateKey.generateECDSA().publicKey.toStringRaw(),
     HEDERA_MIRROR_NODE_URL: "https://testnet.mirrornode.hedera.com", LENDER_PROOF_MODE: "deterministic",
+    HCS_AUDIT_TOPIC_ID: "0.0.50",
     SIGNER_URL: "http://127.0.0.1:3004", LENDER_BORROWER_REPUTATION: "0.9",
     CONSUMER_PRIVATE_KEY: "must-not-reach-lenders", SIGNER_REGISTRAR_CREDENTIAL: "must-not-reach-lenders",
   };

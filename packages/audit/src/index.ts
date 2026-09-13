@@ -27,4 +27,8 @@ export interface HcsEventEnvelope {
   v: 1; eventId: string; missionId: string; type: AuditEventType;
   payloadHash: string; transactionId?: string; occurredAt: string;
 }
-export interface AuditSink { write(event: AuditEvent): Promise<void>; }
+export interface AuditSink { write(event: AuditEvent): Promise<void>; readonly durable?: boolean; }
+
+// Browser-safe surface only. The Hedera publisher and Node hashing live under `@koven/audit/node`.
+export * from "./hash.js";
+export * from "./writer.js";

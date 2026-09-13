@@ -1,4 +1,5 @@
 export * from "./db.js";
+export * from "./audit-outbox.js";
 export * from "./events.js";
 export * from "./idempotency.js";
 export * from "./loans.js";
