@@ -18,6 +18,7 @@ import type { PrivateKey, PublicKey } from "@koven/hedera";
 import {
   CreditAcceptRequestSchema,
   CreditAcceptResponseSchema,
+  CreditAcceptZkRequestSchema,
   CreditOfferSchema,
   CreditRequestSchema,
   ErrorResponseSchema,
@@ -31,6 +32,7 @@ import { ZodError } from "zod";
 import type { FundingService } from "./fund.js";
 import type { LenderPolicy } from "./policy.js";
 import { LenderStore } from "./store.js";
+import type { LenderProofMode, LenderProofVerifier } from "./verify.js";
 
 export interface LenderAppOptions {
   store: LenderStore;
@@ -43,6 +45,10 @@ export interface LenderAppOptions {
   borrowerReputation(accountId: string): number;
   now?: () => string;
   offerValiditySeconds?: number;
+  /** Deployment setting, never a request field: `zk` requires and verifies payment evidence before funding. */
+  proofMode?: LenderProofMode;
+  /** Required in zk mode: the lender's own pinned verification key. */
+  proofVerifier?: LenderProofVerifier;
 }
 
 const asyncRoute = (handler: RequestHandler): RequestHandler => (request, response, next) => {
@@ -98,7 +104,14 @@ const statusFor = (code: string): number => {
       return 401;
     case ErrorCode.MISSION_POLICY_MISSING:
     case ErrorCode.MISSION_POLICY_MISMATCH:
+    case ErrorCode.PROOF_INVALID:
+    case ErrorCode.PROOF_VKEY_MISMATCH:
+    case ErrorCode.CIRCUIT_ID_MISMATCH:
+    case ErrorCode.RECIPIENT_NOT_APPROVED:
+    case ErrorCode.CAP_EXCEEDED:
       return 403;
+    case ErrorCode.CHALLENGE_BINDING_MISMATCH:
+      return 400;
     case ErrorCode.OFFER_EXPIRED:
     case ErrorCode.CREDIT_ACCEPTANCE_CONFLICT:
     case ErrorCode.IDEMPOTENCY_CONFLICT:
@@ -127,12 +140,24 @@ export function createLenderApp(options: LenderAppOptions): Application {
   const app = express();
   const now = options.now ?? (() => new Date().toISOString());
   const offerValiditySeconds = options.offerValiditySeconds ?? 300;
+  const proofMode = options.proofMode ?? "deterministic";
+  const proofVerifier = options.proofVerifier;
+  if (proofMode === "zk" && proofVerifier === undefined) {
+    throw new Error("zk credit acceptance requires the lender's pinned verification key");
+  }
   app.disable("x-powered-by");
   app.use(express.json({ limit: MAX_HTTP_BODY_BYTES }));
 
   app.post("/internal/missions/register", asyncRoute(async (request, response) => {
     requireOperator(request.get("authorization"), options.operatorCredential);
     const policy = MissionPolicyRequestSchema.parse(request.body);
+    // M3: the registrar must carry the singleton root of the selected provider.
+    if (proofVerifier !== undefined && policy.approvedRecipientsRoot !== proofVerifier.rootFor(policy.provider.accountId)) {
+      throw new CreditProtocolError(
+        ErrorCode.MISSION_POLICY_MISMATCH,
+        "Mission policy root is not the selected provider's singleton root",
+      );
+    }
     options.store.registerMissionPolicy(policy, now());
     response.json(MissionPolicyResponseSchema.parse({
       missionId: policy.missionId,
@@ -196,7 +221,9 @@ export function createLenderApp(options: LenderAppOptions): Application {
   }));
 
   app.post("/credit/accept", asyncRoute(async (request, response) => {
-    const accepted = CreditAcceptRequestSchema.parse(request.body);
+    const accepted = proofMode === "zk"
+      ? CreditAcceptZkRequestSchema.parse(request.body)
+      : CreditAcceptRequestSchema.parse(request.body);
     const stored = options.store.getOffer(accepted.acceptance.offerId);
     if (stored === undefined) {
       throw new CreditProtocolError(ErrorCode.CREDIT_ACCEPTANCE_INVALID, "Credit offer is unknown");
@@ -240,6 +267,14 @@ export function createLenderApp(options: LenderAppOptions): Application {
       accepted.paymentIntent,
       accepted.paymentProofBundle,
     );
+    if (proofMode === "zk" && accepted.paymentIntent !== undefined && accepted.paymentProofBundle !== undefined) {
+      await proofVerifier!.assertAcceptanceEvidence(
+        missionPolicy,
+        stored.offer,
+        accepted.paymentIntent,
+        accepted.paymentProofBundle,
+      );
+    }
     const result = await options.fundingService.accept(stored.request, stored.offer, signed);
     response.json(CreditAcceptResponseSchema.parse(result));
   }));

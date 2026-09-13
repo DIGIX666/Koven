@@ -88,6 +88,14 @@ numeric ID as `PROVIDER_A_ACCOUNT_ID` for the initial single-provider deployment
 Do not put a shell-variable reference into the value: environment expansion is
 not assumed. The second provider will use its own payTo in M4.
 
+Each lender process verifies borrower proof bundles with its own key:
+
+| Variable | Meaning |
+| --- | --- |
+| `LENDER_PROOF_MODE` | `deterministic` (default, M2) or `zk` (M3: `POST /credit/accept` requires `paymentIntent` and `paymentProofBundle`, recomputes the singleton provider root, resource hash and commitment from the lender-local registrar policy and refuses funding on any mismatch) |
+| `LENDER_VERIFICATION_KEY_PATH` | zk mode: path to the lender's own copy of `verification_key.json` (from `pnpm zk:build`); never a key supplied by the borrower |
+| `LENDER_TRUSTED_VKEY_SHA256` | zk mode: reviewed SHA-256 pin of that file; startup refuses a file that hashes differently, and a bundle claiming another hash is `proof_vkey_mismatch` |
+
 The facilitator fee payer is read from `/supported` and validated at runtime in
 A0.4; it must not be pinned in `.env`. Leave `HCS_AUDIT_TOPIC_ID` empty until A0.3
 creates the topic. ZK artifacts are produced/pinned in A1; the directory setting

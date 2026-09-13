@@ -93,6 +93,12 @@ importers:
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       express:
         specifier: 5.1.0
         version: 5.1.0

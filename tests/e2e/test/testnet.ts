@@ -19,7 +19,9 @@ import {
   createLenderApp,
   FundingService,
   HttpLoanRegistrationClient,
+  LenderProofVerifier,
   LenderStore,
+  loadLenderVerification,
   MirrorNodeFundingReconciler,
 } from "@koven/lender-agents";
 import {
@@ -54,7 +56,7 @@ import {
   type SignerRuntime,
 } from "@koven/restricted-signer";
 import { CallbackResponseSchema, MissionSchema } from "@koven/schemas";
-import { createHttpPaymentAuthorizer } from "@koven/x402";
+import { createHttpPaymentAuthorizer, loadPoseidon } from "@koven/x402";
 
 const env = process.env;
 
@@ -125,11 +127,20 @@ const spendingCapTinybar = BigInt(env.DEFAULT_MISSION_SPENDING_CAP || priceTinyb
 if (priceTinybar <= 0n) throw new Error("Provider price must be positive");
 if (spendingCapTinybar < priceTinybar) throw new Error("Mission spending cap must cover the provider price");
 // The signer's deployment setting; in zk mode the consumer proves every payment with the official artifacts.
-const proofMode = env.SIGNER_PROOF_MODE || "deterministic";
-if (proofMode !== "deterministic" && proofMode !== "zk") throw new Error("SIGNER_PROOF_MODE must be deterministic or zk");
+const proofModeSetting = env.SIGNER_PROOF_MODE || "deterministic";
+if (proofModeSetting !== "deterministic" && proofModeSetting !== "zk") throw new Error("SIGNER_PROOF_MODE must be deterministic or zk");
+const proofMode: "deterministic" | "zk" = proofModeSetting;
 
 const runId = `${new Date().toISOString().replaceAll(":", "-")}-${randomBytes(4).toString("hex")}`;
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+// The lender pins its own key in the same mode; a run never mixes proof modes across services.
+const lenderVerification = proofMode === "zk"
+  ? loadLenderVerification({
+    LENDER_PROOF_MODE: "zk",
+    LENDER_VERIFICATION_KEY_PATH: resolve(repositoryRoot, required("LENDER_VERIFICATION_KEY_PATH")),
+    LENDER_TRUSTED_VKEY_SHA256: required("LENDER_TRUSTED_VKEY_SHA256"),
+  })
+  : { proofMode, trusted: undefined };
 const resumeDirectory = env.KOVEN_TESTNET_RESUME_DIRECTORY?.trim();
 const runDirectory = resumeDirectory
   ? resolve(repositoryRoot, resumeDirectory)
@@ -245,6 +256,10 @@ try {
       operatorCredential: lenderOperatorCredential,
       borrowerPublicKey: accountId => accountId === consumerAccountId ? consumerKey.publicKey : undefined,
       borrowerReputation: () => 1,
+      proofMode: lenderVerification.proofMode,
+      ...(lenderVerification.trusted === undefined ? {} : {
+        proofVerifier: new LenderProofVerifier({ poseidon: await loadPoseidon(), trusted: lenderVerification.trusted }),
+      }),
     }).listen(lenderPort, "127.0.0.1");
     await listen(lenderServer);
   }

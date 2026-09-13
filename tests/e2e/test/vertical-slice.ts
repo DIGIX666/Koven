@@ -26,6 +26,7 @@ import {
   createLenderApp,
   FundingService,
   HttpLoanRegistrationClient,
+  LenderProofVerifier,
   LenderStore,
   type FundingTransfer,
 } from "@koven/lender-agents";
@@ -198,8 +199,17 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
     ? undefined
     : new ProofPolicy({ poseidon, trusted: { verificationKey: artifacts.verificationKey, vkeyHash: artifacts.vkeyHash } });
   const zkOptions = proofPolicy === undefined ? {} : { proofMode: "zk" as const, proofPolicy };
+  // The lender verifies with its own copy of the key, never through the signer's policy object.
+  const lenderZkOptions = artifacts === undefined ? {} : {
+    proofMode: "zk" as const,
+    proofVerifier: new LenderProofVerifier({
+      poseidon,
+      trusted: { verificationKey: artifacts.verificationKey, vkeyHash: artifacts.vkeyHash },
+    }),
+  };
   const transfers = new Map<string, TransferRecord>();
-  const balances = new Map([[consumerAccountId, 1n]]);
+  // The borrower holds nothing: the loan principal must cover the proven payment amount (M3).
+  const balances = new Map([[consumerAccountId, 0n]]);
   let clock = Date.now();
   const settledAt = new Date(clock).toISOString();
   let paymentTxId: string | undefined;
@@ -414,6 +424,7 @@ export async function runVerticalSlice({ proofMode }: VerticalSliceOptions): Pro
       borrowerPublicKey: accountId => accountId === consumerAccountId ? consumerKey.publicKey : undefined,
       borrowerReputation: () => 0.9,
       now: () => new Date(clock).toISOString(),
+      ...lenderZkOptions,
     }).listen(0, "127.0.0.1");
     await listen(lenderServer);
     lenderUrl = serverOrigin(lenderServer);

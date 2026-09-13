@@ -11,6 +11,8 @@
     "@koven/hedera": "workspace:*",
     "@koven/persistence": "workspace:*",
     "@koven/schemas": "workspace:*",
+    "@koven/x402": "workspace:*",
+    "@koven/zk-policy": "workspace:*",
     "express": "5.1.0",
     "zod": "3.25.76"
   },
@@ -21,6 +23,7 @@
     "build": "tsc -b tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --root ../.. --project @koven/lender-agents --passWithNoTests"
+    "test": "vitest run --root ../.. --project @koven/lender-agents --passWithNoTests",
+    "test:artifacts": "vitest run --config vitest.artifacts.config.ts"
   }
 }
