@@ -86,7 +86,7 @@ credentials for local development.
 | `pnpm test:e2e` | Run the complete real-service vertical flow with deterministic offline network boundaries |
 | `pnpm test:e2e:testnet` | Run the same vertical flow on Hedera testnet and print funding, payment and repayment HashScan links |
 | `pnpm zk:build` | Compile the policy circuit and verify every official artifact against the pinned manifest |
-| `pnpm zk:test` | Run every workspace's artifact-bound suites (Policy V1 benchmark, proving and verification, the signer's real-proof gate) on the verified official artifacts; requires `pnpm zk:build` first |
+| `pnpm zk:test` | Run every workspace's artifact-bound suites (Policy V1 benchmark, proving and verification, the signer's real-proof gate, the offline vertical flow with real proofs and a zk-mode signer) on the verified official artifacts; requires `pnpm zk:build` first |
 
 Use the pinned pnpm version from `packageManager` (Corepack), then run:
 
@@ -115,7 +115,9 @@ configuration is compiled into `dist/tooling/`. Builds exclude tests, while
 to TypeScript source for workspace development with tsx/Vitest. The web workspace
 currently compiles only its tool configuration. The E2E workspace exercises real
 HTTP services offline by default; its separate testnet command requires disposable
-funded credentials from `.env`. The testnet command performs real HBAR transfers
+funded credentials from `.env` and follows `SIGNER_PROOF_MODE` (`zk` proves every
+payment with the official artifacts and needs `SIGNER_VERIFICATION_KEY_PATH` and
+`SIGNER_TRUSTED_VKEY_SHA256`). The testnet command performs real HBAR transfers
 and retains its timestamped SQLite evidence under `.koven-testnet/`; run it only
 with low-balance test accounts. If a run is interrupted after a transaction, resume
 that exact run without funding again with

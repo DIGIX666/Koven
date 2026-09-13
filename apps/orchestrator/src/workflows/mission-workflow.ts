@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  ConsumerMissionExecutor,
-  ConsumerMissionProgress,
-  ConsumerMissionResult,
+import {
+  ConsumerPolicyRejectedError,
+  type ConsumerMissionExecutor,
+  type ConsumerMissionProgress,
+  type ConsumerMissionResult,
 } from "@koven/consumer-agent";
 import { loanIdForOffer } from "@koven/credit-protocol";
 import { ALLOWED_TRANSITIONS, type Loan, type MissionState, type Provider, type RankedProvider } from "@koven/domain";
@@ -16,11 +17,19 @@ import {
   type PersistedMission,
 } from "@koven/persistence";
 import type { HttpRequest } from "@koven/schemas";
+import { type FieldHasher, loadPoseidon } from "@koven/x402";
+import { buildMerkleTree } from "@koven/zk-policy";
 
 import { hashBytes } from "../canonical.js";
 import type { MissionStateMachine } from "../state/index.js";
 
 class PolicyRejectedError extends Error {}
+
+/**
+ * A mission whose provider selection failed has no approved recipient, hence
+ * no tree; `0` is stored in place of a root and no proof can match it.
+ */
+const NO_APPROVED_RECIPIENTS_ROOT = "0";
 
 export interface MissionPolicyRegistrar {
   register(policy: HttpRequest<"registerMissionPolicy">): Promise<void>;
@@ -33,25 +42,38 @@ export interface MissionWorkflowOptions {
   readonly policyRegistrars: readonly MissionPolicyRegistrar[];
   readonly providers: readonly Provider[];
   readonly borrowerAccountId: string;
-  readonly approvedRecipientsRoot: string;
+  /** Poseidon used for the singleton recipient root; loaded on first use when omitted. */
+  readonly poseidon?: FieldHasher;
   readonly now?: () => string;
   readonly missionId?: () => string;
   readonly sessionId?: (missionId: string) => string;
 }
 
-/** Coordinates trusted policy provisioning around the keyless consumer sequence. */
+/**
+ * Coordinates trusted policy provisioning around the keyless consumer sequence.
+ * The mission's approved recipient set is the selected provider alone, so its
+ * `approvedRecipientsRoot` is that provider's singleton Merkle root.
+ */
 export class MissionWorkflow {
   private readonly now: () => string;
   private readonly missionId: () => string;
   private readonly sessionId: (missionId: string) => string;
+  private poseidon: FieldHasher | undefined;
 
   constructor(private readonly options: MissionWorkflowOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.missionId = options.missionId ?? (() => `mission-${randomUUID()}`);
     this.sessionId = options.sessionId ?? (missionId => `session-${missionId}`);
+    this.poseidon = options.poseidon;
     if (options.policyRegistrars.length === 0) {
       throw new Error("At least one trusted mission-policy registrar is required");
     }
+  }
+
+  /** Singleton recipient root of the selected provider, as the signer and lender recompute it. */
+  async recipientRoot(providerAccountId: string): Promise<string> {
+    this.poseidon ??= await loadPoseidon();
+    return buildMerkleTree([providerAccountId], this.poseidon).root;
   }
 
   async run(request: HttpRequest<"createMission">): Promise<PersistedMission> {
@@ -59,12 +81,17 @@ export class MissionWorkflow {
     const targetSha256 = hashBytes(request.source);
     const createdAt = this.now();
     const spendingCapTinybar = BigInt(request.maxBudgetTinybar);
+    const ranked = rankProviders(this.options.providers, spendingCapTinybar);
+    const selected = ranked[0];
+    const approvedRecipientsRoot = selected === undefined
+      ? NO_APPROVED_RECIPIENTS_ROOT
+      : await this.recipientRoot(selected.provider.accountId);
     createMission(this.options.database, {
       id,
       state: "created",
       spendingCapTinybar,
       spentTinybar: 0n,
-      approvedRecipientsRoot: this.options.approvedRecipientsRoot,
+      approvedRecipientsRoot,
       targetRef: request.targetRef,
       targetSha256,
       createdAt,
@@ -91,8 +118,6 @@ export class MissionWorkflow {
         targetRef: request.targetRef,
         targetSha256,
       });
-      const ranked = rankProviders(this.options.providers, spendingCapTinybar);
-      const selected = ranked[0];
       if (selected === undefined) {
         await move("payment-preparation", "providers-ranked", { ranked });
         throw new PolicyRejectedError("No provider is available");
@@ -112,7 +137,7 @@ export class MissionWorkflow {
         sessionCapTinybar: spendingCapTinybar,
         targetSha256,
         provider,
-        approvedRecipientsRoot: this.options.approvedRecipientsRoot,
+        approvedRecipientsRoot,
         createdAt,
       });
       const policy = {
@@ -123,7 +148,7 @@ export class MissionWorkflow {
         sessionCapTinybar: spendingCapTinybar.toString(10),
         targetSha256,
         provider: { ...provider, priceTinybar: provider.priceTinybar.toString(10) },
-        approvedRecipientsRoot: this.options.approvedRecipientsRoot,
+        approvedRecipientsRoot,
       } satisfies HttpRequest<"registerMissionPolicy">;
       await Promise.all(this.options.policyRegistrars.map(registrar => registrar.register(policy)));
 
@@ -138,6 +163,17 @@ export class MissionWorkflow {
         {
           onProgress: async event => {
             switch (event.type) {
+              case "proof-generated":
+                // Proven before credit: an audit fact, not a stored state.
+                await this.options.stateMachine.record(id, {
+                  type: "proof-generated",
+                  payload: {
+                    nonce: event.nonce,
+                    publicSignals: event.publicSignals,
+                    vkeyHash: event.vkeyHash,
+                  },
+                });
+                return;
               case "credit-requested":
                 await move("credit-requested", "credit-requested", {
                   requestId: event.request.id,
@@ -196,7 +232,7 @@ export class MissionWorkflow {
         reportSha256: result.scan.report.reportSha256,
       });
     } catch (error) {
-      await this.finishFailure(state, loan, move, error);
+      await this.finishFailure(state, loan, ranked, move, error);
     }
 
     const completed = getMission(this.options.database, id);
@@ -282,9 +318,19 @@ export class MissionWorkflow {
     }
   }
 
+  /**
+   * A policy rejection (the workflow's own budget checks, or a signer, lender
+   * or witness refusal carrying a frozen policy code) is recorded with its code
+   * and routed through `policy-rejected` to `recovery`; anything else is a
+   * generic failure. The frozen transition table only reaches `policy-rejected`
+   * from `payment-preparation`, so a proof refused before credit is first
+   * ranked into `payment-preparation`, while a refusal during credit acceptance
+   * can only reach `recovery` through `failed`.
+   */
   private async finishFailure(
     initialState: MissionState,
     loan: Loan | undefined,
+    ranked: readonly RankedProvider[],
     move: (
       to: MissionState,
       type: Parameters<MissionStateMachine["transition"]>[3]["type"],
@@ -296,12 +342,18 @@ export class MissionWorkflow {
   ): Promise<void> {
     let state = initialState;
     const reason = error instanceof Error ? error.message : "Unknown workflow failure";
+    const policyRejection = error instanceof PolicyRejectedError || error instanceof ConsumerPolicyRejectedError;
+    const payload = error instanceof ConsumerPolicyRejectedError ? { reason, code: error.code } : { reason };
     const moveFailure = async (to: MissionState, type: "payment-rejected" | "mission-failed") => {
-      await move(to, type, { reason });
+      await move(to, type, payload);
       state = to;
     };
 
-    if (error instanceof PolicyRejectedError && state === "payment-preparation") {
+    if (error instanceof ConsumerPolicyRejectedError && state === "discovering-services") {
+      await move("payment-preparation", "providers-ranked", { ranked });
+      state = "payment-preparation";
+    }
+    if (policyRejection && state === "payment-preparation") {
       await moveFailure("policy-rejected", "payment-rejected");
     } else if ((ALLOWED_TRANSITIONS[state] as readonly MissionState[]).includes("failed")) {
       await moveFailure("failed", "mission-failed");

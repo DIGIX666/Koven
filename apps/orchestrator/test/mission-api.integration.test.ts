@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 
 import type { Application } from "express";
-import type { ConsumerMissionObserver } from "@koven/consumer-agent";
+import { ConsumerPolicyRejectedError, type ConsumerMissionObserver } from "@koven/consumer-agent";
 import { loanIdForOffer } from "@koven/credit-protocol";
 import { ErrorCode } from "@koven/domain";
 import {
@@ -16,6 +16,8 @@ import {
 } from "@koven/persistence";
 import { CallbackResponseSchema, MAX_HTTP_BODY_BYTES, MissionDetailResponseSchema, MissionSchema } from "@koven/schemas";
 import { NoopAuditSink } from "@koven/testing";
+import { loadPoseidon } from "@koven/x402";
+import { buildMerkleTree } from "@koven/zk-policy";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -40,6 +42,18 @@ const loanId = loanIdForOffer(offerId);
 const source = "pragma solidity ^0.8.0; contract Example {}";
 const targetSha256 = hashBytes(source);
 const callbackSecret = Buffer.alloc(32, 9);
+const proofBundle = {
+  proof: {
+    protocol: "groth16" as const,
+    curve: "bn128" as const,
+    pi_a: ["1", "2", "1"] as [string, string, string],
+    pi_b: [["1", "2"], ["3", "4"], ["1", "0"]] as [[string, string], [string, string], [string, string]],
+    pi_c: ["5", "6", "1"] as [string, string, string],
+  },
+  publicSignals: ["11", "22", "1000"] as [string, string, string],
+  vkeyHash: "d".repeat(64),
+  circuitId: "koven-policy-v1",
+};
 
 const databases: KovenDatabase[] = [];
 const servers: Server[] = [];
@@ -54,6 +68,8 @@ interface RuntimeOptions {
   readonly settlementMismatch?: boolean;
   readonly paymentFailureAfterFunding?: boolean;
   readonly continueAfterFunding?: Promise<void>;
+  /** The keyless consumer refuses on a frozen policy code at the given step. */
+  readonly policyRejection?: { readonly code: string; readonly at: "proof" | "acceptance" | "authorize" };
 }
 
 const runtime = (options: RuntimeOptions = {}) => {
@@ -98,8 +114,14 @@ const runtime = (options: RuntimeOptions = {}) => {
   const consumer = {
     execute: vi.fn(async (_input: unknown, observer?: ConsumerMissionObserver) => {
       const scan = { status: 200 as const, receipt, report };
+      const refuse = (at: "proof" | "acceptance" | "authorize") => {
+        if (options.policyRejection?.at === at) {
+          throw new ConsumerPolicyRejectedError(options.policyRejection.code, `refused at ${at}`);
+        }
+      };
       const pay = async () => {
         await observer?.onProgress({ type: "payment-preparation" });
+        refuse("authorize");
         await observer?.onProgress({
           type: "payment-authorized",
           transactionId: settlementTxId,
@@ -109,6 +131,13 @@ const runtime = (options: RuntimeOptions = {}) => {
         await observer?.onProgress({ type: "service-paid", scan });
         return scan;
       };
+      refuse("proof");
+      await observer?.onProgress({
+        type: "proof-generated",
+        nonce: "1",
+        publicSignals: proofBundle.publicSignals,
+        vkeyHash: proofBundle.vkeyHash,
+      });
       const balance = options.borrowerBalance ?? 1n;
       if (balance >= providerPriceTinybar) return { scan: await pay() };
       const principalTinybar = providerPriceTinybar - balance;
@@ -123,6 +152,7 @@ const runtime = (options: RuntimeOptions = {}) => {
         signature: "d".repeat(128),
       };
       await observer?.onProgress({ type: "credit-requested", request });
+      refuse("acceptance");
       const offer = {
         id: offerId,
         requestId: request.id,
@@ -171,7 +201,6 @@ const runtime = (options: RuntimeOptions = {}) => {
     policyRegistrars,
     providers: options.noProviders ? [] : [provider],
     borrowerAccountId: "0.0.10",
-    approvedRecipientsRoot: "1",
     now: () => timestamp,
     missionId: () => "mission-1",
   });
@@ -313,6 +342,15 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(test.consumer.execute).toHaveBeenCalledTimes(1);
     expect(test.policyRegistrars.every(registrar => registrar.register.mock.calls.length === 1)).toBe(true);
     expect(getLoan(test.database, loanId)?.state).toBe("funded");
+    const singletonRoot = buildMerkleTree([test.provider.accountId], await loadPoseidon()).root;
+    expect(created.approvedRecipientsRoot).toBe(singletonRoot);
+    expect(getMissionPolicy(test.database, "mission-1")?.approvedRecipientsRoot).toBe(singletonRoot);
+    expect(test.policyRegistrars[0]!.register).toHaveBeenCalledWith(expect.objectContaining({
+      approvedRecipientsRoot: singletonRoot,
+      spendingCapTinybar: test.budgetTinybar.toString(10),
+    }));
+    expect(listMissionEvents(test.database, "mission-1").find(event => event.type === "proof-generated"))
+      .toMatchObject({ payload: { nonce: "1", publicSignals: proofBundle.publicSignals, vkeyHash: proofBundle.vkeyHash } });
 
     const callback = await postCallback(baseUrl, callbackBody(test.report));
     expect(callback.status, await callback.clone().text()).toBe(202);
@@ -528,6 +566,61 @@ describe("orchestrator mission and trusted completion API", () => {
     expect(getMissionPolicy(test.database, "mission-1")).toBeUndefined();
     expect(test.consumer.execute).not.toHaveBeenCalled();
     expect(test.policyRegistrars.every(registrar => registrar.register.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("routes an over-cap signer refusal through policy-rejected to recovery with the code recorded", async () => {
+    const test = runtime({ policyRejection: { code: ErrorCode.CAP_EXCEEDED, at: "authorize" } });
+    const baseUrl = await listen(test.app);
+
+    const response = await postMission(baseUrl);
+    expect(response.status).toBe(201);
+    expect(MissionSchema.parse(await response.json()).state).toBe("defaulted");
+    expect(getLoan(test.database, loanId)?.state).toBe("funded");
+    const transitions = listMissionEvents<{ from: string; to: string; detail: unknown }>(test.database, "mission-1")
+      .filter(event => event.type === "payment-rejected" || event.type === "mission-failed")
+      .map(event => [event.payload.from, event.payload.to, event.payload.detail]);
+    const detail = { reason: "refused at authorize", code: ErrorCode.CAP_EXCEEDED };
+    expect(transitions).toEqual([
+      ["payment-preparation", "policy-rejected", detail],
+      ["policy-rejected", "recovery", detail],
+      ["recovery", "defaulted", detail],
+    ]);
+    expect(test.repaymentClient.repay).not.toHaveBeenCalled();
+  });
+
+  it("closes a mission whose proof is refused before any credit as a policy rejection", async () => {
+    const test = runtime({ policyRejection: { code: ErrorCode.RECIPIENT_NOT_APPROVED, at: "proof" } });
+    const baseUrl = await listen(test.app);
+
+    expect(MissionSchema.parse(await (await postMission(baseUrl)).json()).state).toBe("closed");
+    expect(getLoan(test.database, loanId)).toBeUndefined();
+    const events = listMissionEvents<{ from: string; to: string; detail: unknown }>(test.database, "mission-1");
+    expect(events.map(event => event.type)).toEqual([
+      "mission-created",
+      "providers-ranked",
+      "payment-rejected",
+      "mission-failed",
+      "mission-failed",
+    ]);
+    expect(events[2]!.payload).toMatchObject({
+      from: "payment-preparation",
+      to: "policy-rejected",
+      detail: { code: ErrorCode.RECIPIENT_NOT_APPROVED },
+    });
+    expect(events.at(-1)!.payload).toMatchObject({ from: "recovery", to: "closed" });
+  });
+
+  it("records the code of a policy refusal during credit acceptance on the failure path", async () => {
+    const test = runtime({ policyRejection: { code: ErrorCode.PROOF_VKEY_MISMATCH, at: "acceptance" } });
+    const baseUrl = await listen(test.app);
+
+    expect(MissionSchema.parse(await (await postMission(baseUrl)).json()).state).toBe("closed");
+    const failures = listMissionEvents<{ from: string; to: string; detail: unknown }>(test.database, "mission-1")
+      .filter(event => event.type === "mission-failed")
+      .map(event => [event.payload.from, event.payload.to]);
+    expect(failures).toEqual([["credit-requested", "failed"], ["failed", "recovery"], ["recovery", "closed"]]);
+    expect(listMissionEvents(test.database, "mission-1").filter(event => event.type === "mission-failed")
+      .every(event => (event.payload as { detail: { code?: string } }).detail.code === ErrorCode.PROOF_VKEY_MISMATCH)).toBe(true);
   });
 
   it("persists funded credit before payment and defaults visibly when payment fails", async () => {

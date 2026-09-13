@@ -69,6 +69,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
 
   agents/lenders:
     dependencies:
@@ -124,6 +127,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       '@x402/hedera':
         specifier: 2.24.0
         version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
@@ -388,6 +394,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       '@x402/core':
         specifier: 2.24.0
         version: 2.24.0

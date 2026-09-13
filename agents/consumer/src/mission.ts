@@ -10,7 +10,8 @@ import {
   type ConsumerLender,
   type CreditEvidence,
 } from "./credit.js";
-import type { ConsumerPayment, ConsumerPaymentProgress } from "./payment.js";
+import type { ConsumerPayment, ConsumerPaymentProgress, PreparedPayment } from "./payment.js";
+import { paymentIntentWire, rethrowPolicyRejection } from "./proof.js";
 
 const hashSource = (source: string): string => createHash("sha256").update(source, "utf8").digest("hex");
 
@@ -40,6 +41,13 @@ export interface ConsumerMissionResult {
 
 export type ConsumerMissionProgress =
   | { readonly type: "payment-preparation" }
+  | {
+    /** M3: the policy proof bound to the payment intent, produced before credit acceptance. */
+    readonly type: "proof-generated";
+    readonly nonce: string;
+    readonly publicSignals: readonly [string, string, string];
+    readonly vkeyHash: string;
+  }
   | ConsumerPaymentProgress
   | {
     readonly type: "credit-requested";
@@ -74,7 +82,12 @@ const defaultWait = (milliseconds: number): Promise<void> => new Promise(resolve
   setTimeout(resolve, milliseconds);
 });
 
-/** Keyless consumer sequence: signed credit, confirmed registration, then paid scan. */
+/**
+ * Keyless consumer sequence (M3 order): obtain and normalise the provider's
+ * challenge, prove it against the mission policy, bind the intent and proof
+ * into the signed credit acceptance, wait for funding and registration, then
+ * pay with that same bound intent.
+ */
 export class ConsumerMissionExecutor {
   private readonly now: () => string;
   private readonly requestId: () => string;
@@ -114,6 +127,21 @@ export class ConsumerMissionExecutor {
       source: input.source,
       targetSha256: hashSource(input.source),
     });
+    // The challenge and its proof come first, so the credit acceptance can bind
+    // the exact payment intent and the lender can verify it before funding.
+    const prepared: PreparedPayment = await this.options.payment.prepare(scanRequest, input.provider, {
+      capTinybar: input.maxBudgetTinybar,
+      approvedRecipients: [input.provider.accountId],
+    });
+    if (prepared.bundle !== undefined) {
+      await observer?.onProgress({
+        type: "proof-generated",
+        nonce: prepared.intent.nonce,
+        publicSignals: prepared.bundle.publicSignals,
+        vkeyHash: prepared.bundle.vkeyHash,
+      });
+    }
+
     const balance = await this.options.balance.getBalanceTinybar(this.options.borrowerAccountId);
     const principalTinybar = input.provider.priceTinybar > balance
       ? input.provider.priceTinybar - balance
@@ -130,19 +158,25 @@ export class ConsumerMissionExecutor {
         purposeHash: canonicalHash({ missionId: input.missionId, targetSha256: scanRequest.targetSha256 }),
         createdAt: this.now(),
       };
-      const request = await this.options.signer.signCreditRequest(unsigned);
-      await observer?.onProgress({ type: "credit-requested", request });
-      const offer = await this.options.lender.quote(request);
-      if (offer === null) throw new Error("Lender declined the credit request");
-      const evidence = input.creditEvidence ?? {};
-      const acceptance = await this.options.signer.signCreditAcceptance(offer, evidence);
-      const { fundingTxId } = await this.awaitFunding(acceptance, evidence);
-      credit = { request, offer, acceptance, fundingTxId };
+      try {
+        const request = await this.options.signer.signCreditRequest(unsigned);
+        await observer?.onProgress({ type: "credit-requested", request });
+        const offer = await this.options.lender.quote(request);
+        if (offer === null) throw new Error("Lender declined the credit request");
+        const evidence: CreditEvidence = prepared.bundle !== undefined
+          ? { paymentIntent: paymentIntentWire(prepared.intent), paymentProofBundle: prepared.bundle }
+          : (input.creditEvidence ?? {});
+        const acceptance = await this.options.signer.signCreditAcceptance(offer, evidence);
+        const { fundingTxId } = await this.awaitFunding(acceptance, evidence);
+        credit = { request, offer, acceptance, fundingTxId };
+      } catch (error) {
+        rethrowPolicyRejection(error);
+      }
       await observer?.onProgress({ type: "funded", ...credit });
     }
 
     await observer?.onProgress({ type: "payment-preparation" });
-    const scan = await this.options.payment.pay(scanRequest, input.provider, observer);
+    const scan = await this.options.payment.pay(prepared, observer);
     return credit === undefined ? { scan } : { scan, credit };
   }
 
