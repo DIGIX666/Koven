@@ -35,7 +35,12 @@ export async function createLenderRuntime(source: Environment) {
     database = openDatabase(required("LENDER_DATABASE_URL"));
     const store = new LenderStore(database);
     const fundingService = new FundingService({ store, lenderAccountId: accountId,
-      gateway: new AgentKitFundingGateway(client, accountId, new MirrorNodeFundingReconciler(required("HEDERA_MIRROR_NODE_URL"))),
+      gateway: new AgentKitFundingGateway(
+        client,
+        accountId,
+        new MirrorNodeFundingReconciler(required("HEDERA_MIRROR_NODE_URL")),
+        required("HCS_AUDIT_TOPIC_ID"),
+      ),
       registrationClient: new HttpLoanRegistrationClient(required("SIGNER_URL"), required("LENDER_SIGNER_CREDENTIAL")),
     });
     const app = createLenderApp({ store, fundingService, lenderAccountId: accountId, lenderPrivateKey: key,

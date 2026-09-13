@@ -387,9 +387,10 @@ describe("first conservative lender", () => {
   it("configures the production funding gateway for direct autonomous tool use", () => {
     const client = {} as ConstructorParameters<typeof AgentKitFundingGateway>[0];
     const reconciler = new FakeFundingGateway();
-    const gateway = new AgentKitFundingGateway(client, "0.0.20", reconciler);
+    const gateway = new AgentKitFundingGateway(client, "0.0.20", reconciler, "0.0.123");
 
     expect(gateway.mode).toBe(AgentMode.AUTONOMOUS);
     expect(gateway.toolName).toBe("transfer_hbar_tool");
+    expect(gateway.auditTopicId).toBe("0.0.123");
   });
 });
