@@ -68,6 +68,9 @@ const failure = (run: () => unknown, code: string) => {
   expect(run).toThrowError(SignerError);
   try { run(); } catch (error) { expect((error as SignerError).code).toBe(code); }
 };
+const rejection = async (run: () => Promise<unknown>, code: string) => {
+  await expect(run()).rejects.toMatchObject({ code });
+};
 
 describe("typed credit request signing", () => {
   it("signs only a request bound to the borrower's provisioned mission", () => {
@@ -93,11 +96,11 @@ describe("typed credit request signing", () => {
 });
 
 describe("typed credit acceptance signing", () => {
-  it("constructs and signs one acceptance per mission from a verified offer", () => {
+  it("constructs and signs one acceptance per mission from a verified offer", async () => {
     const { credit, store } = service();
     credit.signCreditRequest({ request: unsignedRequest() });
     const offer = lenderOffer();
-    const signed = credit.signCreditAcceptance({ offer });
+    const signed = await credit.signCreditAcceptance({ offer });
 
     expect(signed.acceptance).toEqual({
       requestId: "credit-1",
@@ -109,13 +112,13 @@ describe("typed credit acceptance signing", () => {
       expiresAt: offer.expiresAt,
     });
     expect(verifyDomain(consumerKey.publicKey, CREDIT_SIGNATURE_DOMAINS.acceptance, signed.acceptance, signed.signature)).toBe(true);
-    expect(credit.signCreditAcceptance({ offer })).toEqual(signed);
+    expect(await credit.signCreditAcceptance({ offer })).toEqual(signed);
     expect(store.getAcceptance("mission-1")?.offer).toEqual(offer);
 
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ id: "offer-2", feeTinybar: "1" }) }), "credit_acceptance_conflict");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ id: "offer-2", feeTinybar: "1" }) }), "credit_acceptance_conflict");
   });
 
-  it("binds optional M3 evidence hashes into the signed acceptance", () => {
+  it("binds optional M3 evidence hashes into the signed acceptance", async () => {
     const { credit } = service();
     credit.signCreditRequest({ request: unsignedRequest() });
     const paymentIntent = { amountTinybar: "1000000", recipientAccountId: "0.0.2001", nonce: "1", resourceHash: "a".repeat(64), missionId: "mission-1" };
@@ -125,33 +128,33 @@ describe("typed credit acceptance signing", () => {
       vkeyHash: "b".repeat(64),
       circuitId: "koven-policy-v1",
     };
-    const signed = credit.signCreditAcceptance({ offer: lenderOffer(), paymentIntent, paymentProofBundle });
+    const signed = await credit.signCreditAcceptance({ offer: lenderOffer(), paymentIntent, paymentProofBundle });
     expect(signed.acceptance.paymentIntentHash).toBe(canonicalHash(paymentIntent));
     expect(signed.acceptance.paymentProofBundleHash).toBe(canonicalHash(paymentProofBundle));
   });
 
-  it("rejects offers in the frozen order: signature, request, expiry, principal, terms, term", () => {
+  it("rejects offers in the frozen order: signature, request, expiry, principal, terms, term", async () => {
     const { credit } = service();
     credit.signCreditRequest({ request: unsignedRequest() });
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ signature: "0".repeat(128) }) }), "offer_signature_invalid");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ lenderAccountId: "0.0.4002" }) }), "offer_signature_invalid");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ requestId: "credit-2" }) }), "request_invalid");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ expiresAt: "2026-09-12T11:59:59.000Z" }) }), "offer_expired");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ principalTinybar: "2999999" }) }), "request_invalid");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ termsHash: "0".repeat(64) }) }), "request_invalid");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ termSeconds: 7200 }) }), "request_invalid");
-    failure(() => credit.signCreditAcceptance({ offer: lenderOffer({ principalTinybar: "5000001" }) }), "mission_policy_mismatch");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ signature: "0".repeat(128) }) }), "offer_signature_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ lenderAccountId: "0.0.4002" }) }), "offer_signature_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ requestId: "credit-2" }) }), "request_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ expiresAt: "2026-09-12T11:59:59.000Z" }) }), "offer_expired");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ principalTinybar: "2999999" }) }), "request_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ termsHash: "0".repeat(64) }) }), "request_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ termSeconds: 7200 }) }), "request_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: lenderOffer({ principalTinybar: "5000001" }) }), "mission_policy_mismatch");
     // An altered field under a stale signature is a signature failure, not a terms failure.
     const genuine = lenderOffer();
-    failure(() => credit.signCreditAcceptance({ offer: { ...genuine, feeTinybar: "1" } }), "offer_signature_invalid");
+    await rejection(() => credit.signCreditAcceptance({ offer: { ...genuine, feeTinybar: "1" } }), "offer_signature_invalid");
   });
 });
 
 describe("lender-authenticated loan registration", () => {
-  const registration = (credit: CreditService, overrides: Partial<HttpRequest<"registerLoan">> = {}): HttpRequest<"registerLoan"> => {
+  const registration = async (credit: CreditService, overrides: Partial<HttpRequest<"registerLoan">> = {}): Promise<HttpRequest<"registerLoan">> => {
     const { signature } = credit.signCreditRequest({ request: unsignedRequest() });
     const offer = lenderOffer();
-    const signed = credit.signCreditAcceptance({ offer });
+    const signed = await credit.signCreditAcceptance({ offer });
     return {
       loanId: "loan-1",
       request: { ...unsignedRequest(), signature },
@@ -165,7 +168,7 @@ describe("lender-authenticated loan registration", () => {
 
   it("registers a funded loan once after confirming the funding on the ledger", async () => {
     const { credit, store, confirmer } = service();
-    const body = registration(credit);
+    const body = await registration(credit);
 
     await expect(credit.registerLoan(lenderAccountId, body)).resolves.toEqual({ loanId: "loan-1", state: "funded" });
     expect(confirmer.confirm).toHaveBeenCalledWith({
@@ -186,7 +189,7 @@ describe("lender-authenticated loan registration", () => {
     const pending = new SignerError("settlement_unconfirmed", "Transfer is not yet visible");
     const confirmer = { confirm: vi.fn().mockRejectedValueOnce(pending).mockRejectedValueOnce(new SignerError("funding_mismatch", "wrong amount")).mockResolvedValue({ settledAt: now }) };
     const { credit, store } = service(confirmer);
-    const body = registration(credit);
+    const body = await registration(credit);
 
     await expect(credit.registerLoan("0.0.4002", body)).rejects.toMatchObject({ code: "auth_invalid", status: 401 });
     await expect(credit.registerLoan(lenderAccountId, { ...body, signatures: { acceptance: "0".repeat(128) } }))

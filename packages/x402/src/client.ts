@@ -6,7 +6,7 @@ import {
 } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired } from "@x402/core/types";
 import type { ClientHederaSigner } from "@x402/hedera";
-import { ErrorCode, type PaidScanRequest, type PaymentRequirements, type ScanRequest } from "@koven/domain";
+import { ErrorCode, type PaidScanRequest, type PaymentRequirements, type ProofBundle, type ScanRequest } from "@koven/domain";
 import {
   AuthorizeRequestSchema,
   AuthorizeResponseSchema,
@@ -123,6 +123,8 @@ export interface MissionPaymentContext {
   /** Absolute provider scan URL the payment is bound to. */
   readonly scanUrl: string;
   readonly policy?: ChallengePolicy;
+  /** M3: the policy proof bound to this intent, sent as the `bundle` field of `/authorize`. */
+  readonly bundle?: ProofBundle;
 }
 
 /**
@@ -144,13 +146,14 @@ export class RemoteRestrictedSigner implements ClientHederaSigner {
   }
 
   async createPartiallySignedTransferTransaction(requirements: PaymentRequirements): Promise<string> {
-    const { missionId, targetSha256, nonce, scanUrl, policy } = this.mission;
+    const { missionId, targetSha256, nonce, scanUrl, policy, bundle } = this.mission;
     normalizeChallenge(requirements, missionId, targetSha256, nonce, { scanUrl, ...(policy ? { policy } : {}) });
 
     const response = AuthorizeResponseSchema.parse(await this.authorizer.authorize({
       missionId,
       requirements,
       nonce,
+      ...(bundle ? { bundle } : {}),
     }));
     const authorization = response.paymentAuthorization;
     const expectedPolicy = policy ?? DEFAULT_CHALLENGE_POLICY;

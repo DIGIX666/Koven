@@ -14,6 +14,7 @@
     "@koven/restricted-signer": "workspace:*",
     "@koven/schemas": "workspace:*",
     "@koven/x402": "workspace:*",
+    "@koven/zk-policy": "workspace:*",
     "@x402/core": "2.24.0",
     "@x402/hedera": "2.24.0"
   },
@@ -25,6 +26,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. --project @koven/e2e",
-    "test:testnet": "tsx --env-file=../../.env test/testnet.ts"
+    "test:testnet": "tsx --env-file=../../.env test/testnet.ts",
+    "test:artifacts": "vitest run --config vitest.artifacts.config.ts"
   }
 }

@@ -1,7 +1,7 @@
 import { type ClientHederaSigner, createClientHederaSigner, inspectHederaTransaction, Transaction } from "@x402/hedera";
-import { ErrorCode } from "@koven/domain";
+import { ErrorCode, type NormalizedChallenge } from "@koven/domain";
 import type { PrivateKey } from "@koven/hedera";
-import { AuthorizeRequestSchema, AuthorizeResponseSchema, type HttpRequest, type HttpResponse } from "@koven/schemas";
+import { AuthorizeRequestSchema, AuthorizeResponseSchema, AuthorizeZkRequestSchema, type HttpRequest, type HttpResponse } from "@koven/schemas";
 import {
   challengeToFieldInputs,
   ChallengeRejectedError,
@@ -10,8 +10,9 @@ import {
   paymentCommitment,
 } from "@koven/x402";
 
-import { SCAN_AUTHORIZATION_DOMAIN, sha256Hex, signDomain } from "./canonical.js";
+import { canonicalHash, SCAN_AUTHORIZATION_DOMAIN, sha256Hex, signDomain } from "./canonical.js";
 import { fail } from "./errors.js";
+import type { ProofMode, ProofPolicy } from "./proof.js";
 import type { SignerStore, WireAuthorization } from "./store.js";
 
 export const CIRCUIT_ID = "koven-policy-v1";
@@ -50,13 +51,24 @@ export interface PaymentGateOptions {
   readonly accountId: string;
   readonly privateKey: PrivateKey;
   readonly network: "hedera:testnet";
-  /** Deployment milestone configuration; M2 only knows the deterministic gate. */
-  readonly proofMode?: "deterministic";
+  /** Deployment milestone configuration: the M2 deterministic gate, or the M3 gate requiring a verified proof. */
+  readonly proofMode?: ProofMode;
+  /** Required in `zk` mode: the signer's pinned key and the proof checks. */
+  readonly proofPolicy?: ProofPolicy;
   readonly poseidon: FieldHasher;
   readonly now?: () => Date;
   /** Test seam only; production always builds with the consumer key held here. */
   readonly clientSigner?: ClientHederaSigner;
 }
+
+/** Wire form of a normalized challenge, as hashed into `paymentIntentHash` at acceptance. */
+const intentWire = (challenge: NormalizedChallenge) => ({
+  amountTinybar: challenge.amountTinybar.toString(10),
+  recipientAccountId: challenge.recipientAccountId,
+  nonce: challenge.nonce,
+  resourceHash: challenge.resourceHash,
+  missionId: challenge.missionId,
+});
 
 /** Valid-start plus valid-duration of the signed transaction, in Unix milliseconds. */
 export function transactionValidUntil(transactionBase64: string, transactionId: string): number {
@@ -82,15 +94,21 @@ export class PaymentGate {
   private readonly now: () => Date;
   private readonly clientSigner: ClientHederaSigner;
 
+  private readonly proofMode: ProofMode;
+
   constructor(private readonly options: PaymentGateOptions) {
-    if ((options.proofMode ?? "deterministic") !== "deterministic") throw new Error("Unsupported payment gate mode");
+    this.proofMode = options.proofMode ?? "deterministic";
+    if (this.proofMode === "zk" && options.proofPolicy === undefined) {
+      throw new Error("The zk payment gate requires a pinned verification key");
+    }
     this.now = options.now ?? (() => new Date());
     this.clientSigner = options.clientSigner
       ?? createClientHederaSigner(options.accountId, options.privateKey, { network: options.network });
   }
 
   async authorize(input: HttpRequest<"authorize">): Promise<HttpResponse<"authorize">> {
-    const request = AuthorizeRequestSchema.parse(input);
+    // In zk mode the bundle is mandatory; the mode is deployment configuration, never a request field.
+    const request = this.proofMode === "zk" ? AuthorizeZkRequestSchema.parse(input) : AuthorizeRequestSchema.parse(input);
     const policy = this.options.store.getMissionPolicy(request.missionId);
     if (policy === undefined) fail(ErrorCode.MISSION_POLICY_MISSING, "Mission policy is not provisioned");
 
@@ -105,13 +123,23 @@ export class PaymentGate {
       if (error instanceof ChallengeRejectedError) fail(ErrorCode.CHALLENGE_BINDING_MISMATCH, error.message);
       throw error;
     }
+    // A signed acceptance binds one payment intent per mission; the payment must
+    // be that intent, so the lender funded exactly what is paid.
+    const accepted = this.options.store.getAcceptance(policy.missionId)?.acceptance;
+    if (accepted?.paymentIntentHash !== undefined && accepted.paymentIntentHash !== canonicalHash(intentWire(challenge))) {
+      fail(ErrorCode.CHALLENGE_BINDING_MISMATCH, "Challenge is not the payment intent bound into the accepted credit");
+    }
+    // M3: the proof is checked ahead of everything else, against a commitment
+    // this signer computes itself, the mission's stored root and its cap.
+    const commitment = this.proofMode === "zk" && this.options.proofPolicy !== undefined && request.bundle !== undefined
+      ? await this.options.proofPolicy.assertProof(request.bundle, policy, challenge)
+      : paymentCommitment(challengeToFieldInputs(challenge, this.options.poseidon), this.options.poseidon).toString(10);
     if (challenge.recipientAccountId !== policy.provider.accountId) {
       fail(ErrorCode.RECIPIENT_NOT_APPROVED, "Challenge recipient is not the mission's selected provider");
     }
     if (challenge.amountTinybar > BigInt(policy.spendingCapTinybar)) {
       fail(ErrorCode.CAP_EXCEEDED, "Challenge amount exceeds the mission spending cap");
     }
-    const commitment = paymentCommitment(challengeToFieldInputs(challenge, this.options.poseidon), this.options.poseidon).toString(10);
 
     return this.mutex.run(policy.missionId, async () => {
       const transaction = await this.clientSigner.createPartiallySignedTransferTransaction(request.requirements);

@@ -9,6 +9,7 @@ import type { CompletionService } from "./completion.js";
 import type { CreditService } from "./credit.js";
 import { fail, SignerError } from "./errors.js";
 import { CIRCUIT_ID, type PaymentGate } from "./gate.js";
+import type { ProofPolicy } from "./proof.js";
 import type { RepaymentService } from "./repay.js";
 import type { SignerStore } from "./store.js";
 
@@ -18,6 +19,8 @@ export interface SignerAppOptions {
   readonly credit: CreditService;
   readonly completion: CompletionService;
   readonly repayment: RepaymentService;
+  /** Present in the zk deployment: exposes the pinned key hash and the root check on registration. */
+  readonly proofPolicy?: ProofPolicy;
   readonly credentials: {
     readonly consumer: string;
     readonly orchestrator: string;
@@ -74,7 +77,11 @@ export function createSignerApp(options: SignerAppOptions): Express {
     return account;
   };
 
-  app.get("/health", route(200, () => HealthResponseSchema.parse({ status: "ok", circuitId: CIRCUIT_ID, vkeyHash: null })));
+  app.get("/health", route(200, () => HealthResponseSchema.parse({
+    status: "ok",
+    circuitId: CIRCUIT_ID,
+    vkeyHash: options.proofPolicy?.vkeyHash ?? null,
+  })));
 
   app.post("/authorize", json, route(200, request => {
     requireRole(request, "consumer");
@@ -98,7 +105,8 @@ export function createSignerApp(options: SignerAppOptions): Express {
   app.post("/internal/missions/register", json, route(200, request => {
     requireRole(request, "registrar");
     const now = (options.now ?? (() => new Date()))().toISOString();
-    options.store.registerMissionPolicy(request.body, now);
+    const proofPolicy = options.proofPolicy;
+    options.store.registerMissionPolicy(request.body, now, proofPolicy ? account => proofPolicy.rootFor(account) : undefined);
     return MissionPolicyResponseSchema.parse({ missionId: request.body.missionId, status: "registered" });
   }));
 

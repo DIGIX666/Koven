@@ -30,7 +30,6 @@ const fields = {
   LENDER_B_PRIVATE_KEY: requiredString,
   HCS_AUDIT_TOPIC_ID: accountId,
   DEFAULT_MISSION_SPENDING_CAP: decimal,
-  APPROVED_RECIPIENTS_ROOT: decimal,
   WEB_PORT: port,
   ORCHESTRATOR_PORT: port,
   DIRECTORY_PORT: port,
@@ -46,7 +45,7 @@ const schema = <K extends keyof typeof fields>(...keys: K[]) => z.object(
 const signerSchema = schema(
   "HEDERA_NETWORK", "HEDERA_MIRROR_NODE_URL", "X402_NETWORK", "CONSUMER_ACCOUNT_ID",
   "CONSUMER_PRIVATE_KEY", "RESTRICTED_SIGNER_PORT", "DATABASE_URL",
-  "DEFAULT_MISSION_SPENDING_CAP", "APPROVED_RECIPIENTS_ROOT",
+  "DEFAULT_MISSION_SPENDING_CAP",
 );
 const orchestratorSchema = schema(
   "CONSUMER_ACCOUNT_ID", "ORCHESTRATOR_PORT", "DIRECTORY_PORT", "RESOURCE_SERVER_PORT",
@@ -93,7 +92,6 @@ export interface SignerEnv {
   port: number;
   databaseUrl: string;
   defaultMissionSpendingCap: string;
-  approvedRecipientsRoot: string;
 }
 
 export interface OrchestratorEnv {
@@ -160,7 +158,6 @@ export function loadSignerEnv(source: EnvironmentSource = process.env): SignerEn
     port: env.RESTRICTED_SIGNER_PORT,
     databaseUrl: env.DATABASE_URL,
     defaultMissionSpendingCap: env.DEFAULT_MISSION_SPENDING_CAP,
-    approvedRecipientsRoot: env.APPROVED_RECIPIENTS_ROOT,
   });
 }
 

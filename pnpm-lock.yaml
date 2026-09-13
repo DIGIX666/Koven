@@ -69,6 +69,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
 
   agents/lenders:
     dependencies:
@@ -90,6 +93,12 @@ importers:
       '@koven/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       express:
         specifier: 5.1.0
         version: 5.1.0
@@ -124,6 +133,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       '@x402/hedera':
         specifier: 2.24.0
         version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
@@ -250,6 +262,19 @@ importers:
         version: link:../../services/resource-server
 
   packages/zk-policy:
+    dependencies:
+      '@koven/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@koven/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@koven/x402':
+        specifier: workspace:*
+        version: link:../x402
+      snarkjs:
+        specifier: 0.7.6
+        version: 0.7.6
     devDependencies:
       circomlib:
         specifier: 2.0.5
@@ -257,9 +282,6 @@ importers:
       circomlibjs:
         specifier: 0.1.7
         version: 0.1.7
-      snarkjs:
-        specifier: 0.7.6
-        version: 0.7.6
 
   services/directory: {}
 
@@ -326,6 +348,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       '@x402/hedera':
         specifier: 2.24.0
         version: 2.24.0(ansi-regex@6.2.2)(ansi-styles@6.2.3)(bn.js@5.2.3)(debug@4.4.3)(protobufjs@8.6.6)(strip-ansi@7.1.2)
@@ -375,6 +400,9 @@ importers:
       '@koven/x402':
         specifier: workspace:*
         version: link:../../packages/x402
+      '@koven/zk-policy':
+        specifier: workspace:*
+        version: link:../../packages/zk-policy
       '@x402/core':
         specifier: 2.24.0
         version: 2.24.0

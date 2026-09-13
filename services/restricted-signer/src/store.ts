@@ -166,8 +166,16 @@ export class SignerStore {
    * that `/authorize` reserves against; a new mission cannot raise a session's
    * stored cap.
    */
-  registerMissionPolicy(policy: MissionPolicy, now: string): "registered" | "duplicate" {
+  registerMissionPolicy(
+    policy: MissionPolicy,
+    now: string,
+    /** M3: the singleton provider root recomputed by the signer; a differing submitted root is rejected. */
+    expectedRoot?: (providerAccountId: string) => string,
+  ): "registered" | "duplicate" {
     const parsed = MissionPolicyRequestSchema.parse(policy);
+    if (expectedRoot !== undefined && parsed.approvedRecipientsRoot !== expectedRoot(parsed.provider.accountId)) {
+      fail(ErrorCode.MISSION_POLICY_MISMATCH, "Approved recipients root is not the selected provider's singleton root");
+    }
     const contentHash = canonicalHash(parsed);
     const register = this.database.transaction((): "registered" | "duplicate" => {
       const existing = this.database.prepare(`

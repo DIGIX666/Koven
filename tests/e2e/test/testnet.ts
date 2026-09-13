@@ -9,6 +9,7 @@ import {
   ConsumerPaymentService,
   HttpCreditSigner,
   HttpLender,
+  ZkPolicyProver,
 } from "@koven/consumer-agent";
 import type { Provider } from "@koven/domain";
 import { createClient, explorerUrl, getBalanceTinybar, PrivateKey } from "@koven/hedera";
@@ -18,7 +19,9 @@ import {
   createLenderApp,
   FundingService,
   HttpLoanRegistrationClient,
+  LenderProofVerifier,
   LenderStore,
+  loadLenderVerification,
   MirrorNodeFundingReconciler,
 } from "@koven/lender-agents";
 import {
@@ -53,7 +56,7 @@ import {
   type SignerRuntime,
 } from "@koven/restricted-signer";
 import { CallbackResponseSchema, MissionSchema } from "@koven/schemas";
-import { createHttpPaymentAuthorizer } from "@koven/x402";
+import { createHttpPaymentAuthorizer, loadPoseidon } from "@koven/x402";
 
 const env = process.env;
 
@@ -123,9 +126,21 @@ const priceTinybar = BigInt(env.PROVIDER_A_PRICE_TINYBAR || "1000000");
 const spendingCapTinybar = BigInt(env.DEFAULT_MISSION_SPENDING_CAP || priceTinybar.toString(10));
 if (priceTinybar <= 0n) throw new Error("Provider price must be positive");
 if (spendingCapTinybar < priceTinybar) throw new Error("Mission spending cap must cover the provider price");
+// The signer's deployment setting; in zk mode the consumer proves every payment with the official artifacts.
+const proofModeSetting = env.SIGNER_PROOF_MODE || "deterministic";
+if (proofModeSetting !== "deterministic" && proofModeSetting !== "zk") throw new Error("SIGNER_PROOF_MODE must be deterministic or zk");
+const proofMode: "deterministic" | "zk" = proofModeSetting;
 
 const runId = `${new Date().toISOString().replaceAll(":", "-")}-${randomBytes(4).toString("hex")}`;
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+// The lender pins its own key in the same mode; a run never mixes proof modes across services.
+const lenderVerification = proofMode === "zk"
+  ? loadLenderVerification({
+    LENDER_PROOF_MODE: "zk",
+    LENDER_VERIFICATION_KEY_PATH: resolve(repositoryRoot, required("LENDER_VERIFICATION_KEY_PATH")),
+    LENDER_TRUSTED_VKEY_SHA256: required("LENDER_TRUSTED_VKEY_SHA256"),
+  })
+  : { proofMode, trusted: undefined };
 const resumeDirectory = env.KOVEN_TESTNET_RESUME_DIRECTORY?.trim();
 const runDirectory = resumeDirectory
   ? resolve(repositoryRoot, resumeDirectory)
@@ -200,8 +215,11 @@ try {
     RESTRICTED_SIGNER_HOST: "127.0.0.1",
     DATABASE_URL: resolve(runDirectory, "signer.db"),
     DEFAULT_MISSION_SPENDING_CAP: spendingCapTinybar.toString(10),
-    APPROVED_RECIPIENTS_ROOT: env.APPROVED_RECIPIENTS_ROOT || "1",
-    SIGNER_PROOF_MODE: "deterministic",
+    SIGNER_PROOF_MODE: proofMode,
+    ...(proofMode === "zk" ? {
+      SIGNER_VERIFICATION_KEY_PATH: resolve(repositoryRoot, required("SIGNER_VERIFICATION_KEY_PATH")),
+      SIGNER_TRUSTED_VKEY_SHA256: required("SIGNER_TRUSTED_VKEY_SHA256"),
+    } : {}),
     SIGNER_CONSUMER_CREDENTIAL: consumerCredential,
     SIGNER_ORCHESTRATOR_CREDENTIAL: orchestratorCredential,
     SIGNER_REGISTRAR_CREDENTIAL: registrarCredential,
@@ -238,6 +256,10 @@ try {
       operatorCredential: lenderOperatorCredential,
       borrowerPublicKey: accountId => accountId === consumerAccountId ? consumerKey.publicKey : undefined,
       borrowerReputation: () => 1,
+      proofMode: lenderVerification.proofMode,
+      ...(lenderVerification.trusted === undefined ? {} : {
+        proofVerifier: new LenderProofVerifier({ poseidon: await loadPoseidon(), trusted: lenderVerification.trusted }),
+      }),
     }).listen(lenderPort, "127.0.0.1");
     await listen(lenderServer);
   }
@@ -257,6 +279,7 @@ try {
       payment: new ConsumerPaymentService({
         borrowerAccountId: consumerAccountId,
         authorizer: createHttpPaymentAuthorizer({ baseUrl: signerUrl, credential: consumerCredential }),
+        ...(proofMode === "zk" ? { prover: new ZkPolicyProver() } : {}),
       }),
     });
     const workflow = new MissionWorkflow({
@@ -269,7 +292,6 @@ try {
       ],
       providers: [provider],
       borrowerAccountId: consumerAccountId,
-      approvedRecipientsRoot: env.APPROVED_RECIPIENTS_ROOT || "1",
     });
     return createOrchestratorApp({
       database,
@@ -459,13 +481,18 @@ try {
   if (mission?.state !== "closed" || !loan?.fundingTxId || loan.repaymentTxId !== repaymentTxId || !completion) {
     throw new Error(`Vertical testnet flow did not remain closed; final state is ${mission?.state ?? "missing"}`);
   }
-  if (!listMissionEvents(orchestratorDatabase, missionId).some(event => event.type === "callback-duplicate")) {
+  const eventTypes = listMissionEvents(orchestratorDatabase, missionId).map(event => event.type);
+  if (!eventTypes.includes("callback-duplicate")) {
     throw new Error("Duplicate callback audit evidence is missing");
+  }
+  if (eventTypes.includes("proof-generated") !== (proofMode === "zk")) {
+    throw new Error(`Proof audit evidence does not match the ${proofMode} signer mode`);
   }
 
   process.stdout.write(`${JSON.stringify({
     missionId,
     state: mission.state,
+    proofMode,
     recovery: "lost callback response replayed after restart without a second repayment",
     transactions: {
       funding: { id: loan.fundingTxId, hashscan: explorerUrl(loan.fundingTxId) },

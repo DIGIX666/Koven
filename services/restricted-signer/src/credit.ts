@@ -5,17 +5,20 @@ import {
   LoanRegistrationResponseSchema,
   SignatureResponseSchema,
   SignCreditAcceptanceSchema,
+  SignCreditAcceptanceZkSchema,
   SignCreditRequestSchema,
   SignedAcceptanceSchema,
   UINT64_MAX,
   type HttpRequest,
   type HttpResponse,
 } from "@koven/schemas";
+import { resourceHashHex } from "@koven/x402";
 
 import { canonicalHash, canonicalJson, signDomain, verifyDomain, withoutSignature } from "./canonical.js";
 import { fail } from "./errors.js";
 import type { TransferConfirmer } from "./ledger.js";
-import type { SignerStore, WireOffer } from "./store.js";
+import type { ProofMode, ProofPolicy } from "./proof.js";
+import type { MissionPolicy, SignerStore, WireOffer } from "./store.js";
 
 export interface CreditServiceOptions {
   readonly store: SignerStore;
@@ -24,6 +27,9 @@ export interface CreditServiceOptions {
   readonly lenderPublicKeys: Readonly<Record<string, string>>;
   readonly confirmer: TransferConfirmer;
   readonly now?: () => string;
+  /** M3: acceptance requires the normalized intent and its proof, checked against trusted policy. */
+  readonly proofMode?: ProofMode;
+  readonly proofPolicy?: ProofPolicy;
 }
 
 /** `purposeHash` is SHA-256 of canonical `{ missionId, targetSha256 }` from the stored mission. */
@@ -49,9 +55,30 @@ export const termsHashFor = (offer: Pick<WireOffer, "requestId" | "lenderAccount
  */
 export class CreditService {
   private readonly now: () => string;
+  private readonly proofMode: ProofMode;
 
   constructor(private readonly options: CreditServiceOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
+    this.proofMode = options.proofMode ?? "deterministic";
+    if (this.proofMode === "zk" && options.proofPolicy === undefined) {
+      throw new Error("zk credit acceptance requires a pinned verification key");
+    }
+  }
+
+  /** M3: the signed intent must describe a payment the trusted mission policy allows. */
+  private async assertIntent(
+    policy: MissionPolicy,
+    intent: HttpRequest<"signCreditAcceptance">["paymentIntent"] & object,
+    bundle: HttpRequest<"signCreditAcceptance">["paymentProofBundle"] & object,
+  ): Promise<void> {
+    const challenge = { ...intent, amountTinybar: BigInt(intent.amountTinybar) };
+    if (
+      intent.missionId !== policy.missionId
+      || intent.recipientAccountId !== policy.provider.accountId
+      || challenge.amountTinybar > BigInt(policy.spendingCapTinybar)
+      || intent.resourceHash !== resourceHashHex(`${policy.provider.endpoint}/scan`, policy.missionId, policy.targetSha256)
+    ) fail(ErrorCode.MISSION_POLICY_MISMATCH, "Payment intent does not match the trusted mission policy");
+    await this.options.proofPolicy!.assertProof(bundle, policy, challenge);
   }
 
   signCreditRequest(input: HttpRequest<"signCreditRequest">): HttpResponse<"signCreditRequest"> {
@@ -98,8 +125,10 @@ export class CreditService {
     }
   }
 
-  signCreditAcceptance(input: HttpRequest<"signCreditAcceptance">): HttpResponse<"signCreditAcceptance"> {
-    const { offer, paymentIntent, paymentProofBundle } = SignCreditAcceptanceSchema.parse(input);
+  async signCreditAcceptance(input: HttpRequest<"signCreditAcceptance">): Promise<HttpResponse<"signCreditAcceptance">> {
+    const { offer, paymentIntent, paymentProofBundle } = this.proofMode === "zk"
+      ? SignCreditAcceptanceZkSchema.parse(input)
+      : SignCreditAcceptanceSchema.parse(input);
     const stored = this.options.store.getCreditRequest(offer.requestId);
     if (stored === undefined) fail(ErrorCode.REQUEST_INVALID, "Credit offer references an unknown request");
     const policy = this.options.store.getMissionPolicy(stored.request.missionId);
@@ -107,6 +136,10 @@ export class CreditService {
     this.validateOffer(offer, stored.request);
     if (BigInt(offer.principalTinybar) > BigInt(policy.spendingCapTinybar)) {
       fail(ErrorCode.MISSION_POLICY_MISMATCH, "Credit offer principal exceeds the mission spending cap");
+    }
+    // M2 binds optional evidence by hash only; M3 requires it and verifies it against trusted policy.
+    if (this.proofMode === "zk" && paymentIntent !== undefined && paymentProofBundle !== undefined) {
+      await this.assertIntent(policy, paymentIntent, paymentProofBundle);
     }
 
     const acceptance: CreditAcceptance = {

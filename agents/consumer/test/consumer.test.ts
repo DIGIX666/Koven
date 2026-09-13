@@ -13,18 +13,23 @@ import type {
   UnsignedCreditRequest,
 } from "@koven/domain";
 import { PrivateKey } from "@koven/hedera";
-import type { X402Client } from "@koven/x402";
+import { normalizeChallenge, X402RequestError, type X402Client } from "@koven/x402";
+import { WitnessError } from "@koven/zk-policy";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   ConsumerMissionExecutor,
   ConsumerPaymentService,
+  ConsumerPolicyRejectedError,
   ConsumerServiceError,
   HttpCreditSigner,
   HttpLender,
+  paymentIntentWire,
   type ConsumerCreditSigner,
   type ConsumerLender,
   type ConsumerPayment,
+  type ConsumerProver,
+  type PreparedPayment,
 } from "../src/index.js";
 
 const now = "2026-09-13T10:00:00.000Z";
@@ -49,7 +54,7 @@ const unsignedRequest = (overrides: Partial<UnsignedCreditRequest> = {}): Unsign
   id: "credit-1",
   missionId: "mission-1",
   borrowerAccountId,
-  principalTinybar: 99n,
+  principalTinybar: 100n,
   requestedTermSeconds: 3_600,
   purposeHash: canonicalHash({ missionId: "mission-1", targetSha256 }),
   createdAt: now,
@@ -66,7 +71,7 @@ const offerTerms = (overrides: Partial<Omit<CreditOffer, "signature">> = {}) => 
   id: "offer-1",
   requestId: "credit-1",
   lenderAccountId,
-  principalTinybar: 99n,
+  principalTinybar: 100n,
   feeTinybar: 5n,
   termSeconds: 3_600,
   expiresAt: "2026-09-13T10:05:00.000Z",
@@ -85,6 +90,43 @@ const signedAcceptance = (offer: CreditOffer): SignedCreditAcceptance => ({
     expiresAt: offer.expiresAt,
   },
   signature,
+});
+
+const scanRequest: ScanRequest = {
+  missionId: "mission-1",
+  targetRef: "ConsumerFlow.sol",
+  source,
+  targetSha256,
+};
+const requirements = {
+  scheme: "exact" as const,
+  network: "hedera:testnet" as const,
+  asset: "0.0.0" as const,
+  amount: provider.priceTinybar.toString(10),
+  payTo: provider.accountId,
+  maxTimeoutSeconds: 180,
+  extra: { feePayer: "0.0.4001" },
+};
+const policy = { capTinybar: 1_000n, approvedRecipients: [provider.accountId] };
+const bundle = {
+  proof: {
+    protocol: "groth16" as const,
+    curve: "bn128" as const,
+    pi_a: ["1", "2", "1"] as [string, string, string],
+    pi_b: [["1", "2"], ["3", "4"], ["1", "0"]] as [[string, string], [string, string], [string, string]],
+    pi_c: ["5", "6", "1"] as [string, string, string],
+  },
+  publicSignals: ["11", "22", "1000"] as [string, string, string],
+  vkeyHash: "d".repeat(64),
+  circuitId: "koven-policy-v1",
+};
+const prepared = (overrides: Partial<PreparedPayment> = {}): PreparedPayment => ({
+  request: scanRequest,
+  provider,
+  requirements,
+  intent: normalizeChallenge(requirements, "mission-1", targetSha256, "7", { scanUrl: `${provider.endpoint}/scan` }),
+  client: { request: vi.fn(), retryWithPayment: vi.fn() },
+  ...overrides,
 });
 
 const paidResult = {
@@ -200,68 +242,74 @@ describe("consumer credit HTTP adapters", () => {
 });
 
 describe("ConsumerPaymentService", () => {
-  it("binds the real remote-signer flow to the selected provider without a proof bundle", async () => {
-    const order: string[] = [];
-    const transaction = Buffer.from([1, 2, 3, 4]).toString("base64");
-    const transactionSha256 = createHash("sha256").update(Buffer.from(transaction, "base64")).digest("hex");
-    const requirements = {
-      scheme: "exact" as const,
+  const authorization = (transaction: string) => ({
+    transaction,
+    paymentAuthorization: {
+      missionId: "mission-1",
+      targetSha256,
+      transactionSha256: createHash("sha256").update(Buffer.from(transaction, "base64")).digest("hex"),
+      transactionId,
+      borrowerAccountId,
+      providerAccountId: provider.accountId,
+      scanUrl: `${provider.endpoint}/scan`,
+      amountTinybar: provider.priceTinybar.toString(10),
       network: "hedera:testnet" as const,
       asset: "0.0.0" as const,
-      amount: provider.priceTinybar.toString(10),
-      payTo: provider.accountId,
-      maxTimeoutSeconds: 180,
-      extra: { feePayer: "0.0.4001" },
-    };
-    const authorize = vi.fn(async () => ({
-      transaction,
-      paymentAuthorization: {
-        missionId: "mission-1",
-        targetSha256,
-        transactionSha256,
-        transactionId,
-        borrowerAccountId,
-        providerAccountId: provider.accountId,
-        scanUrl: `${provider.endpoint}/scan`,
-        amountTinybar: provider.priceTinybar.toString(10),
-        network: "hedera:testnet" as const,
-        asset: "0.0.0" as const,
-        nonce: "7",
-        expiresAt: "2026-09-13T10:03:00.000Z",
-        signature,
-      },
-    }));
+      nonce: "7",
+      expiresAt: "2026-09-13T10:03:00.000Z",
+      signature,
+    },
+  });
+
+  it("prepares the intent without the signer, then pays with that exact intent and bundle", async () => {
+    const order: string[] = [];
+    const transaction = Buffer.from([1, 2, 3, 4]).toString("base64");
+    const authorize = vi.fn(async () => {
+      order.push("authorize");
+      return authorization(transaction);
+    });
     const client: X402Client = {
-      request: vi.fn(async () => ({ status: 402 as const, requirements })),
+      request: vi.fn(async () => {
+        order.push("request");
+        return { status: 402 as const, requirements };
+      }),
       retryWithPayment: vi.fn(async () => {
         order.push("retry-with-payment");
         return paidResult;
       }),
     };
+    const prover: ConsumerProver = {
+      prove: vi.fn(async () => {
+        order.push("prove");
+        return bundle;
+      }),
+    };
     const payment = new ConsumerPaymentService({
       borrowerAccountId,
       authorizer: { authorize },
+      prover,
       nonce: () => "7",
       clientFactory: scanUrl => {
         expect(scanUrl).toBe(`${provider.endpoint}/scan`);
         return client;
       },
     });
-    const scanRequest: ScanRequest = {
-      missionId: "mission-1",
-      targetRef: "ConsumerFlow.sol",
-      source,
-      targetSha256,
-    };
+
+    const ready = await payment.prepare(scanRequest, provider, policy);
+    expect(order).toEqual(["request", "prove"]);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(ready.intent).toEqual(prepared().intent);
+    expect(ready.bundle).toBe(bundle);
+    expect(prover.prove).toHaveBeenCalledWith(ready.intent, policy);
 
     const progress = vi.fn(async event => { order.push(event.type); });
-    await expect(payment.pay(scanRequest, provider, { onProgress: progress })).resolves.toEqual(paidResult);
-    expect(authorize).toHaveBeenCalledWith({ missionId: "mission-1", requirements, nonce: "7" });
+    await expect(payment.pay(ready, { onProgress: progress })).resolves.toEqual(paidResult);
+    expect(authorize).toHaveBeenCalledWith({ missionId: "mission-1", requirements, nonce: "7", bundle });
     expect(client.retryWithPayment).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: "mission-1", paymentAuthorization: expect.any(Object) }),
       transaction,
     );
-    expect(order).toEqual(["payment-authorized", "retry-with-payment", "service-paid"]);
+    expect(order).toEqual(["request", "prove", "authorize", "payment-authorized", "retry-with-payment", "service-paid"]);
     expect(progress).toHaveBeenNthCalledWith(1, {
       type: "payment-authorized",
       transactionId,
@@ -270,36 +318,80 @@ describe("ConsumerPaymentService", () => {
     });
   });
 
-  it("rejects a challenge for another provider before asking the signer", async () => {
+  it("sends no bundle in deterministic mode", async () => {
+    const authorize = vi.fn(async () => authorization(Buffer.from([9]).toString("base64")));
+    const client: X402Client = {
+      request: vi.fn(async () => ({ status: 402 as const, requirements })),
+      retryWithPayment: vi.fn(async () => paidResult),
+    };
+    const payment = new ConsumerPaymentService({
+      borrowerAccountId,
+      authorizer: { authorize },
+      nonce: () => "7",
+      clientFactory: () => client,
+    });
+
+    const ready = await payment.prepare(scanRequest, provider, policy);
+    expect(ready.bundle).toBeUndefined();
+    await payment.pay(ready);
+    expect(authorize).toHaveBeenCalledWith({ missionId: "mission-1", requirements, nonce: "7" });
+  });
+
+  it("rejects a challenge for another provider before proving or asking the signer", async () => {
     const authorize = vi.fn();
+    const prover: ConsumerProver = { prove: vi.fn() };
     const client: X402Client = {
       request: vi.fn(async () => ({
         status: 402 as const,
-        requirements: {
-          scheme: "exact" as const,
-          network: "hedera:testnet" as const,
-          asset: "0.0.0" as const,
-          amount: "101",
-          payTo: provider.accountId,
-          maxTimeoutSeconds: 180,
-          extra: { feePayer: "0.0.4001" },
-        },
+        requirements: { ...requirements, amount: "101" },
       })),
       retryWithPayment: vi.fn(),
     };
     const payment = new ConsumerPaymentService({
       borrowerAccountId,
       authorizer: { authorize },
+      prover,
       clientFactory: () => client,
     });
 
-    await expect(payment.pay({
-      missionId: "mission-1",
-      targetRef: "ConsumerFlow.sol",
-      source,
-      targetSha256,
-    }, provider)).rejects.toThrow(/selected provider/);
+    await expect(payment.prepare(scanRequest, provider, policy)).rejects.toThrow(/selected provider/);
+    expect(prover.prove).not.toHaveBeenCalled();
     expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("surfaces witness and signer policy refusals with their frozen codes", async () => {
+    const client: X402Client = {
+      request: vi.fn(async () => ({ status: 402 as const, requirements })),
+      retryWithPayment: vi.fn(),
+    };
+    const refusing = new ConsumerPaymentService({
+      borrowerAccountId,
+      authorizer: { authorize: vi.fn() },
+      prover: { prove: vi.fn(async () => { throw new WitnessError("cap_exceeded", "amount exceeds the cap"); }) },
+      clientFactory: () => client,
+    });
+    await expect(refusing.prepare(scanRequest, provider, policy)).rejects.toMatchObject({
+      name: "ConsumerPolicyRejectedError",
+      code: "cap_exceeded",
+    });
+
+    const signerRefuses = new ConsumerPaymentService({
+      borrowerAccountId,
+      authorizer: { authorize: vi.fn(async () => { throw new X402RequestError(403, "recipient_not_approved", "recipient"); }) },
+      clientFactory: () => client,
+    });
+    await expect(signerRefuses.pay(prepared())).rejects.toMatchObject({
+      name: "ConsumerPolicyRejectedError",
+      code: "recipient_not_approved",
+    });
+    expect(client.retryWithPayment).not.toHaveBeenCalled();
+
+    const signerUnavailable = new ConsumerPaymentService({
+      borrowerAccountId,
+      authorizer: { authorize: vi.fn(async () => { throw new X402RequestError(503, "signer_unavailable", "down"); }) },
+      clientFactory: () => client,
+    });
+    await expect(signerUnavailable.pay(prepared())).rejects.toBeInstanceOf(X402RequestError);
   });
 });
 
@@ -332,9 +424,17 @@ describe("ConsumerMissionExecutor", () => {
       }),
     };
     const payment: ConsumerPayment = {
-      pay: vi.fn(async request => {
-        order.push("pay");
+      prepare: vi.fn(async (request, selected, missionPolicy) => {
+        order.push("prepare");
         expect(request.targetSha256).toBe(targetSha256);
+        expect(selected).toBe(provider);
+        expect(missionPolicy).toEqual({ capTinybar: 1_000n, approvedRecipients: [provider.accountId] });
+        return prepared({ bundle });
+      }),
+      pay: vi.fn(async ready => {
+        order.push("pay");
+        expect(ready.intent.nonce).toBe("7");
+        expect(ready.bundle).toBe(bundle);
         return paidResult;
       }),
     };
@@ -361,9 +461,12 @@ describe("ConsumerMissionExecutor", () => {
       provider,
     }, { onProgress: progress });
 
-    expect(result.credit?.request.principalTinybar).toBe(99n);
+    // The whole payment is borrowed, not the shortfall: the principal must cover the bound intent.
+    expect(result.credit?.request.principalTinybar).toBe(100n);
     expect(result.credit?.fundingTxId).toBe(fundingTxId);
     expect(order).toEqual([
+      "prepare",
+      "proof-generated",
       "sign-request",
       "credit-requested",
       "quote",
@@ -375,7 +478,100 @@ describe("ConsumerMissionExecutor", () => {
       "payment-preparation",
       "pay",
     ]);
-    expect(progress).toHaveBeenCalledTimes(3);
+    expect(progress).toHaveBeenCalledTimes(4);
+    expect(progress).toHaveBeenNthCalledWith(1, {
+      type: "proof-generated",
+      nonce: "7",
+      publicSignals: bundle.publicSignals,
+      vkeyHash: bundle.vkeyHash,
+    });
+    const evidence = { paymentIntent: paymentIntentWire(prepared().intent), paymentProofBundle: bundle };
+    expect(signer.signCreditAcceptance).toHaveBeenCalledWith(creditOffer, evidence);
+    expect(lender.accept).toHaveBeenCalledWith(acceptance, evidence);
+    expect(evidence.paymentIntent).toEqual({
+      amountTinybar: "100",
+      recipientAccountId: provider.accountId,
+      nonce: "7",
+      resourceHash: prepared().intent.resourceHash,
+      missionId: "mission-1",
+    });
+  });
+
+  it("keeps the caller's evidence and emits no proof event in deterministic mode", async () => {
+    const creditOffer = { ...offerTerms(), termsHash: "c".repeat(64), signature };
+    const acceptance = signedAcceptance(creditOffer);
+    const signer: ConsumerCreditSigner = {
+      signCreditRequest: vi.fn(async creditRequest => ({ ...creditRequest, signature })),
+      signCreditAcceptance: vi.fn(async () => acceptance),
+    };
+    const lender: ConsumerLender = {
+      quote: vi.fn(async () => creditOffer),
+      accept: vi.fn(async () => ({ fundingTxId })),
+    };
+    const payment: ConsumerPayment = {
+      prepare: vi.fn(async () => prepared()),
+      pay: vi.fn(async () => paidResult),
+    };
+    const executor = new ConsumerMissionExecutor({
+      borrowerAccountId,
+      balance: { getBalanceTinybar: vi.fn(async () => 1n) },
+      signer,
+      lender,
+      payment,
+      now: () => now,
+      requestId: () => "credit-1",
+    });
+    const progress = vi.fn(async (_event: { type: string }) => undefined);
+
+    await executor.execute({
+      missionId: "mission-1",
+      targetRef: "ConsumerFlow.sol",
+      source,
+      maxBudgetTinybar: 1_000n,
+      provider,
+    }, { onProgress: progress });
+
+    expect(progress.mock.calls.map(([event]) => event.type)).toEqual([
+      "credit-requested",
+      "funded",
+      "payment-preparation",
+    ]);
+    expect(signer.signCreditAcceptance).toHaveBeenCalledWith(creditOffer, {});
+    expect(lender.accept).toHaveBeenCalledWith(acceptance, {});
+  });
+
+  it("surfaces a lender policy refusal of the bundle as a policy rejection", async () => {
+    const creditOffer = { ...offerTerms(), termsHash: "c".repeat(64), signature };
+    const signer: ConsumerCreditSigner = {
+      signCreditRequest: vi.fn(async creditRequest => ({ ...creditRequest, signature })),
+      signCreditAcceptance: vi.fn(async () => signedAcceptance(creditOffer)),
+    };
+    const lender: ConsumerLender = {
+      quote: vi.fn(async () => creditOffer),
+      accept: vi.fn(async () => {
+        throw new ConsumerServiceError(422, "proof_vkey_mismatch", "untrusted verification key");
+      }),
+    };
+    const payment: ConsumerPayment = {
+      prepare: vi.fn(async () => prepared({ bundle })),
+      pay: vi.fn(),
+    };
+    const executor = new ConsumerMissionExecutor({
+      borrowerAccountId,
+      balance: { getBalanceTinybar: vi.fn(async () => 1n) },
+      signer,
+      lender,
+      payment,
+    });
+
+    await expect(executor.execute({
+      missionId: "mission-1",
+      targetRef: "ConsumerFlow.sol",
+      source,
+      maxBudgetTinybar: 1_000n,
+      provider,
+    })).rejects.toBeInstanceOf(ConsumerPolicyRejectedError);
+    expect(payment.pay).not.toHaveBeenCalled();
   });
 
   it("pays without contacting credit services when the balance is sufficient", async () => {
@@ -384,7 +580,7 @@ describe("ConsumerMissionExecutor", () => {
       signCreditAcceptance: vi.fn(),
     } as unknown as ConsumerCreditSigner;
     const lender = { quote: vi.fn(), accept: vi.fn() } as unknown as ConsumerLender;
-    const payment = { pay: vi.fn(async () => paidResult) };
+    const payment = { prepare: vi.fn(async () => prepared({ bundle })), pay: vi.fn(async () => paidResult) };
     const executor = new ConsumerMissionExecutor({
       borrowerAccountId,
       balance: { getBalanceTinybar: vi.fn(async () => 100n) },
@@ -404,6 +600,7 @@ describe("ConsumerMissionExecutor", () => {
     expect(result.credit).toBeUndefined();
     expect(signer.signCreditRequest).not.toHaveBeenCalled();
     expect(lender.quote).not.toHaveBeenCalled();
+    expect(payment.prepare).toHaveBeenCalledTimes(1);
     expect(payment.pay).toHaveBeenCalledTimes(1);
   });
 });

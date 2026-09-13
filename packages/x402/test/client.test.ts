@@ -244,6 +244,22 @@ describe("RemoteRestrictedSigner", () => {
     expect(authorizer.calls).toHaveLength(0);
   });
 
+  it("forwards the mission's proof bundle as the /authorize bundle field", async () => {
+    const authorizer = new EmulatedSigner(scanUrl);
+    const bundle = {
+      proof: { protocol: "groth16" as const, curve: "bn128" as const, pi_a: ["1", "2", "1"] as [string, string, string], pi_b: [["1", "2"], ["3", "4"], ["1", "0"]] as [[string, string], [string, string], [string, string]], pi_c: ["5", "6", "1"] as [string, string, string] },
+      publicSignals: ["1", "2", "1000000"] as [string, string, string],
+      vkeyHash: "a".repeat(64),
+      circuitId: "koven-policy-v1",
+    };
+    const signer = new RemoteRestrictedSigner(consumerAccountId, { missionId: scanRequest.missionId, targetSha256, nonce: "1", scanUrl, bundle }, authorizer);
+    await signer.createPartiallySignedTransferTransaction(requirements);
+    expect(authorizer.calls[0]?.bundle).toEqual(bundle);
+    const bare = new RemoteRestrictedSigner(consumerAccountId, { missionId: scanRequest.missionId, targetSha256, nonce: "2", scanUrl }, authorizer);
+    await bare.createPartiallySignedTransferTransaction(requirements);
+    expect(authorizer.calls[1]).not.toHaveProperty("bundle");
+  });
+
   it("retains only an authorization bound to the mission and the exact transaction bytes", async () => {
     const authorizer = new EmulatedSigner(scanUrl);
     const signer = signerFor(authorizer, scanUrl, scanRequest, "7");

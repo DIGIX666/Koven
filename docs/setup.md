@@ -88,6 +88,14 @@ numeric ID as `PROVIDER_A_ACCOUNT_ID` for the initial single-provider deployment
 Do not put a shell-variable reference into the value: environment expansion is
 not assumed. The second provider will use its own payTo in M4.
 
+Each lender process verifies borrower proof bundles with its own key:
+
+| Variable | Meaning |
+| --- | --- |
+| `LENDER_PROOF_MODE` | `deterministic` (default, M2) or `zk` (M3: `POST /credit/accept` requires `paymentIntent` and `paymentProofBundle`, recomputes the singleton provider root, resource hash and commitment from the lender-local registrar policy and refuses funding on any mismatch) |
+| `LENDER_VERIFICATION_KEY_PATH` | zk mode: path to the lender's own copy of `verification_key.json` (from `pnpm zk:build`); never a key supplied by the borrower |
+| `LENDER_TRUSTED_VKEY_SHA256` | zk mode: reviewed SHA-256 pin of that file; startup refuses a file that hashes differently, and a bundle claiming another hash is `proof_vkey_mismatch` |
+
 The facilitator fee payer is read from `/supported` and validated at runtime in
 A0.4; it must not be pinned in `.env`. Leave `HCS_AUDIT_TOPIC_ID` empty until A0.3
 creates the topic. ZK artifacts are produced/pinned in A1; the directory setting
@@ -135,7 +143,9 @@ reads:
 | Variable | Meaning |
 | --- | --- |
 | `RESTRICTED_SIGNER_HOST` | Interface the listener binds to; defaults to `127.0.0.1` |
-| `SIGNER_PROOF_MODE` | Payment gate mode; `deterministic` (default) is the M2 gate. The ZK mode is a later deployment setting, never a request field |
+| `SIGNER_PROOF_MODE` | Payment gate mode, never a request field: `deterministic` (default, M2) or `zk` (M3: `/authorize` and `/sign-credit-acceptance` require a verified policy proof, registration requires the selected provider's singleton root). Whenever a signed acceptance bound a payment intent, `/authorize` signs only that intent |
+| `SIGNER_VERIFICATION_KEY_PATH` | zk mode: path to the signer's own copy of `verification_key.json` (from `pnpm zk:build`) |
+| `SIGNER_TRUSTED_VKEY_SHA256` | zk mode: reviewed SHA-256 pin of that file (`artifacts-manifest.json` → `vkeyHash`); startup refuses a file that hashes differently, and `GET /health` reports the pinned hash |
 | `SIGNER_CONSUMER_CREDENTIAL` | Credential presented by the consumer agent on `/authorize`, `/sign-credit-request` and `/sign-credit-acceptance` |
 | `SIGNER_ORCHESTRATOR_CREDENTIAL` | Credential presented by the orchestrator on `/repay` |
 | `SIGNER_REGISTRAR_CREDENTIAL` | Trusted operator/registrar credential for `/internal/missions/register` |
@@ -157,7 +167,7 @@ pnpm --filter @koven/restricted-signer dev
 ```
 
 `GET /health` answers `{ "status": "ok", "circuitId": "koven-policy-v1", "vkeyHash": null }`
-until M3 pins a verification key.
+in deterministic mode; in zk mode `vkeyHash` is the pinned SHA-256 of the signer's key.
 
 ## Checklist for a new local setup
 
