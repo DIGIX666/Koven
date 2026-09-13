@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 
-import { HederaHcsPublisher, HcsAuditWriter } from "@koven/audit";
+import { HcsAuditWriter } from "@koven/audit";
+import { HederaHcsPublisher } from "@koven/audit/node";
 import { createClient } from "@koven/hedera";
 import { openDatabase, SqliteAuditOutbox } from "@koven/persistence";
 import { config as loadDotenv } from "dotenv";

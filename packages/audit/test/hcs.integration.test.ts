@@ -4,13 +4,13 @@ import { createClient, getTopicMessages } from "@koven/hedera";
 import { expect, it } from "vitest";
 
 import {
-  HederaHcsPublisher,
   HcsAuditWriter,
   serializeHcsEnvelope,
   type AuditOutboxJob,
   type AuditOutboxStore,
   type PreparedHcsMessage,
 } from "../src/index.js";
+import { HederaHcsPublisher } from "../src/node.js";
 
 class SingleEventStore implements AuditOutboxStore {
   private status: "pending" | "processing" | "published" = "pending";

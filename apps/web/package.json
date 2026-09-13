@@ -4,9 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b tsconfig.build.json",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. --project @koven/web --passWithNoTests"
+  },
+  "dependencies": {
+    "@koven/domain": "workspace:*",
+    "@koven/schemas": "workspace:*",
+    "next": "15.5.25",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3"
   }
 }

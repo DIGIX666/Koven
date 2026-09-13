@@ -11,7 +11,7 @@ import {
   HttpLender,
   ZkPolicyProver,
 } from "@koven/consumer-agent";
-import { HederaHcsPublisher } from "@koven/audit";
+import { HederaHcsPublisher } from "@koven/audit/node";
 import { createDirectoryApp, createRegistrarApp, HttpMissionPolicyTarget, ProviderRegistry } from "@koven/directory";
 import type { Provider } from "@koven/domain";
 import { createClient, explorerUrl, getBalanceTinybar, PrivateKey } from "@koven/hedera";

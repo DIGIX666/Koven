@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildHcsEnvelope, hashAuditPayload, serializeHcsEnvelope } from "../src/index.js";
+import { buildHcsEnvelope, serializeHcsEnvelope } from "../src/index.js";
+import { hashAuditPayload } from "../src/node.js";
 
 describe("public HCS audit envelopes", () => {
   it("contains only hashes and non-sensitive references", () => {

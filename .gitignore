@@ -9,6 +9,7 @@ coverage/
 !.env.example
 
 *.log
+*.tsbuildinfo
 .DS_Store
 
 # Generated zero-knowledge artifacts
