@@ -139,9 +139,11 @@ function assertToolVersions(): void {
   assertCircomVersion(run("circom", ["--version"]));
 
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+    dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
   };
-  const snarkjsVersion = packageJson.devDependencies?.snarkjs;
+  // snarkjs is a runtime dependency (proving and verification); circomlib is build-only.
+  const snarkjsVersion = packageJson.dependencies?.snarkjs;
   const circomlibVersion = packageJson.devDependencies?.circomlib;
   if (
     snarkjsVersion !== "0.7.6" ||
