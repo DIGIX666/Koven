@@ -74,3 +74,25 @@ flowchart TB
 ## Design principle
 
 No component in the **agent layer** can authorize a Hedera transaction on its own. Every payment must pass through the **deterministic safety layer**, which does not depend on the LLM interpreting a prompt correctly — it depends only on a verified proof and an isolated signer. See [`threat-model.md`](./threat-model.md) for what this guarantees and what it explicitly does not.
+
+## HCS audit boundaries
+
+Koven stores the complete lifecycle event in the owning service's SQLite
+database and atomically appends a public HCS outbox entry. The HCS envelope
+contains only the event ID, mission ID, event type, payload hash, timestamp and
+an optional transaction reference. Raw reports, signatures, private keys and
+local payloads never enter the topic. A durable worker preserves per-mission
+order, stores signed transaction bytes before submission, reconciles uncertain
+transaction IDs and records the resulting HCS sequence number on the local
+event. `AUDIT_SINK=noop` keeps offline tests and local development network-free;
+`AUDIT_SINK=hcs` enables publication.
+
+`HcsAuditTrailHook` is attached only to lender funding transfers. The lender
+owns that operator key and invokes `transfer_hbar_tool` in
+`AgentMode.AUTONOMOUS`, so the hook observes a transaction actually submitted by
+Agent Kit. It cannot cover borrower repayment because that key remains inside
+the restricted signer, and it cannot cover x402 settlement because Blocky402
+submits that transaction. Credit messages, callbacks, repayments and all other
+lifecycle facts therefore use Koven's explicit durable outbox. The Agent Kit
+hook catches its own HCS failures, so it is additional audit evidence rather
+than the recovery mechanism.
